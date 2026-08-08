@@ -8,21 +8,197 @@ frappe.ui.form.on("Work Order", {
     register_continuous_start_listener();
     hide_create_job_card_button(frm);
     refresh_material_transferred_qty(frm);
+    configure_mold_bom_queries(frm);
+    configure_create_mold_button(frm);
+    register_mold_issue_listener();
   },
   onload_post_render(frm) {
     configure_required_items_grid(frm);
     hide_create_job_card_button(frm);
+    configure_mold_bom_queries(frm);
   },
   bom_no(frm) {
     setTimeout(() => set_source_warehouses(frm), 800);
   },
+  production_item(frm) {
+    configure_mold_bom_queries(frm);
+    if (frm.doc.docstatus === 0 && frm.doc.custom_mold_bom_no) {
+      frm.set_value("custom_mold_bom_no", null);
+    }
+  },
+  custom_mold_bom_no(frm) {
+    refresh_mold_materials(frm);
+  },
+  custom_mold_qty(frm) {
+    refresh_mold_materials(frm);
+  },
+  use_multi_level_bom(frm) {
+    refresh_mold_materials(frm);
+  },
   company(frm) {
     set_source_warehouses(frm);
+    refresh_mold_materials(frm);
   },
   custom_disable_operation(frm) {
     hide_create_job_card_button(frm);
   }
 });
+
+function configure_mold_bom_queries(frm) {
+  const apply_queries = () => {
+    frm.set_query("bom_no", () => ({
+      query: "c4factory.api.work_order_mold.bom_query",
+      filters: {
+        production_item: frm.doc.production_item,
+        bom_type: "BOM",
+      },
+    }));
+    frm.set_query("custom_mold_bom_no", () => ({
+      query: "c4factory.api.work_order_mold.bom_query",
+      filters: {
+        production_item: frm.doc.production_item,
+        bom_type: "Mold",
+      },
+    }));
+  };
+
+  apply_queries();
+  setTimeout(apply_queries, 0);
+}
+
+function refresh_mold_materials(frm) {
+  if (frm.doc.docstatus !== 0) return;
+  clearTimeout(frm.__c4_mold_material_timer);
+  frm.__c4_mold_material_timer = setTimeout(async () => {
+    if (
+      !frm.doc.production_item ||
+      !frm.doc.custom_mold_bom_no ||
+      flt(frm.doc.custom_mold_qty) <= 0
+    ) {
+      frm.clear_table("custom_mold_materials");
+      frm.refresh_field("custom_mold_materials");
+      return;
+    }
+
+    const requested_bom = frm.doc.custom_mold_bom_no;
+    const requested_qty = flt(frm.doc.custom_mold_qty);
+    const materials = await frappe.xcall(
+      "c4factory.api.work_order_mold.get_mold_materials",
+      {
+        production_item: frm.doc.production_item,
+        mold_bom_no: requested_bom,
+        mold_qty: requested_qty,
+        company: frm.doc.company,
+        use_multi_level_bom: cint(frm.doc.use_multi_level_bom),
+      }
+    );
+    if (
+      frm.doc.custom_mold_bom_no !== requested_bom ||
+      flt(frm.doc.custom_mold_qty) !== requested_qty
+    ) {
+      return;
+    }
+    frm.clear_table("custom_mold_materials");
+    (materials || []).forEach((values) => {
+      const row = frm.add_child("custom_mold_materials");
+      Object.assign(row, values);
+    });
+    frm.refresh_field("custom_mold_materials");
+  }, 250);
+}
+
+function configure_create_mold_button(frm) {
+  const replace_button = () => {
+    frm.remove_custom_button(__("Create Mold"));
+    if (
+      frm.doc.docstatus !== 1 ||
+      ["Stopped", "Closed", "Completed", "Cancelled"].includes(frm.doc.status) ||
+      !frm.doc.custom_mold_bom_no ||
+      flt(frm.doc.custom_mold_qty) <= 0
+    ) {
+      return;
+    }
+    frm.add_custom_button(__("Create Mold"), () => create_mold(frm));
+  };
+
+  replace_button();
+  setTimeout(replace_button, 0);
+  setTimeout(replace_button, 300);
+}
+
+async function create_mold(frm) {
+  const context = await frappe.xcall(
+    "c4factory.api.work_order_mold.get_mold_issue_context",
+    { work_order: frm.doc.name }
+  );
+  if (context.pending) {
+    frappe.show_alert({
+      message: __("Mold Material Issue documents are already being created."),
+      indicator: "orange",
+    });
+    return;
+  }
+  const max_qty = flt(context.remaining_qty);
+  if (!context.has_eligible_items || max_qty <= 0) {
+    frappe.show_alert({
+      message: __("No Mold QTY remains to create."),
+      indicator: "orange",
+    });
+    return;
+  }
+
+  frappe.prompt(
+    {
+      fieldname: "qty",
+      fieldtype: "Float",
+      label: __("Mold QTY"),
+      description: __("Balance: {0}", [max_qty]),
+      default: max_qty,
+      reqd: 1,
+    },
+    async ({ qty }) => {
+      if (flt(qty) <= 0 || flt(qty) > max_qty) {
+        frappe.throw(__("Quantity must be greater than zero and not more than {0}.", [max_qty]));
+      }
+      const result = await frappe.xcall(
+        "c4factory.api.work_order_mold.enqueue_mold_material_issue",
+        { work_order: frm.doc.name, qty: flt(qty) }
+      );
+      frappe.show_alert({
+        message: result.message,
+        indicator: result.status === "queued" ? "blue" : "orange",
+      });
+    },
+    __("Create Mold"),
+    __("Create")
+  );
+}
+
+function register_mold_issue_listener() {
+  if (frappe.__c4_mold_issue_listener_registered) return;
+  frappe.__c4_mold_issue_listener_registered = true;
+  frappe.realtime.on("c4factory_mold_issue", (result) => {
+    let message = result.message;
+    if (result.status === "success" && result.stock_entries?.length) {
+      message = result.stock_entries
+        .map((entry) => {
+          const route = `/app/stock-entry/${encodeURIComponent(entry.name)}`;
+          const state = entry.docstatus === 1 ? __("Submitted") : __("Draft");
+          return `<a href="${route}"><b>${entry.name}</b></a> (${__(entry.channel)}, ${state})`;
+        })
+        .join("<br>");
+    }
+    frappe.show_alert({
+      message,
+      indicator: result.status === "success" ? "green" : "red",
+    }, 15);
+
+    const active = window.cur_frm;
+    if (active?.doctype === "Work Order" && active.doc.name === result.work_order) {
+      active.reload_doc();
+    }
+  });
+}
 
 frappe.ui.form.on("Work Order Item", {
   form_render(frm) {

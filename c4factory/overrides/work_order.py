@@ -38,6 +38,12 @@ class WorkOrder(ERPNextWorkOrder):
     set_source_warehouse_from_item_group(self)
     return
 
+  def validate(self):
+    super().validate()
+    from c4factory.api.work_order_mold import validate_and_set_mold_materials
+
+    validate_and_set_mold_materials(self)
+
   def _normalize_required_item_quantities(self):
     """
     Recalculate quantities from the BOM child table without joining Item Default.

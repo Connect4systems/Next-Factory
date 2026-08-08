@@ -1053,8 +1053,9 @@ def _recalculate_work_order_costs(work_order_name: str) -> None:
       - For each Stock Entry Detail row:
           * ignore finished items (is_finished_item = 1)
           * if is_scrap_item = 1 → goes to Scrap Material Cost
-          * raw cost is counted only on Material Transfer for Manufacture
-            so later WIP consumption is not counted a second time
+          * normal raw cost is counted on Material Transfer for Manufacture
+          * mold raw cost is counted on its flagged Material Issue
+            so neither is counted a second time during manufacture
       - Use transfer_qty * basic_rate as the amount
     - Operating Cost = sum of actual Job Card operating cost
     - Total Cost = Raw + Operating - Scrap
@@ -1069,7 +1070,8 @@ def _recalculate_work_order_costs(work_order_name: str) -> None:
             sed.is_scrap_item,
             sed.transfer_qty,
             sed.basic_rate,
-            se.stock_entry_type
+            se.stock_entry_type,
+            se.custom_is_mold_material_issue
         FROM `tabStock Entry Detail` sed
         INNER JOIN `tabStock Entry` se
             ON se.name = sed.parent
@@ -1094,7 +1096,10 @@ def _recalculate_work_order_costs(work_order_name: str) -> None:
             scrap_material_cost += amount
         elif (
             not r.is_finished_item
-            and r.stock_entry_type == "Material Transfer for Manufacture"
+            and (
+                r.stock_entry_type == "Material Transfer for Manufacture"
+                or flt(r.custom_is_mold_material_issue)
+            )
         ):
             raw_material_cost += amount
 

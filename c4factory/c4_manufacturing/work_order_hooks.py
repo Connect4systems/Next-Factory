@@ -76,7 +76,7 @@ def update_scrap_and_costing(doc, method=None):
     - Ensure each scrap row has amount = stock_qty * rate
     - Compute:
         c4_scrap_material_cost  = sum(scrap.amount)
-        c4_raw_material_cost    = value of Material Transfers to WIP (actual SE)
+        c4_raw_material_cost    = transfers to WIP + submitted mold Material Issues
         c4_operating_cost       = actual Job Card operating cost
         c4_total_cost           = raw + operating - scrap
     """
@@ -97,7 +97,7 @@ def update_scrap_and_costing(doc, method=None):
 
     doc.c4_scrap_material_cost = total_scrap_amount
 
-    # --- 2) Raw Material Cost from Material Transfer to WIP ---
+    # --- 2) Raw Material Cost from WIP transfers and mold Material Issues ---
     raw_material_cost = _get_raw_material_cost_from_material_transfers(doc.name, doc.wip_warehouse)
     doc.c4_raw_material_cost = raw_material_cost
 
@@ -118,48 +118,37 @@ def update_scrap_and_costing(doc, method=None):
 
 def _get_raw_material_cost_from_material_transfers(work_order_name, wip_warehouse):
     """
-    Sum value of materials TRANSFERRED INTO WIP for this WO.
+    Sum materials transferred into WIP plus submitted mold Material Issues.
 
-    We consider all Stock Entry Detail rows where:
-    - parent is a submitted Stock Entry
-    - stock_entry_type = 'Material Transfer for Manufacture'
-    - work_order = work_order_name
-    - t_warehouse = wip_warehouse   (i.e., moved into WIP)
+    Normal Work Order materials count when transferred into WIP. Mold materials
+    count when their explicitly flagged Material Issue is submitted.
 
     We look at basic_amount / amount.
     """
 
-    if not work_order_name or not wip_warehouse:
+    if not work_order_name:
         return 0.0
 
-    se_names = frappe.get_all(
-        "Stock Entry",
-        filters={
-            "work_order": work_order_name,
-            "docstatus": 1,
-            "stock_entry_type": "Material Transfer for Manufacture",
-        },
-        pluck="name",
+    return float(
+        frappe.db.sql(
+            """
+            SELECT COALESCE(SUM(COALESCE(NULLIF(ABS(sed.basic_amount), 0), ABS(sed.amount))), 0)
+            FROM `tabStock Entry Detail` sed
+            INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.work_order = %(work_order)s
+              AND se.docstatus = 1
+              AND COALESCE(sed.is_finished_item, 0) = 0
+              AND COALESCE(sed.is_scrap_item, 0) = 0
+              AND (
+                (se.stock_entry_type = 'Material Transfer for Manufacture'
+                 AND sed.t_warehouse = %(wip_warehouse)s)
+                OR COALESCE(se.custom_is_mold_material_issue, 0) = 1
+              )
+            """,
+            {"work_order": work_order_name, "wip_warehouse": wip_warehouse or ""},
+        )[0][0]
+        or 0
     )
-
-    if not se_names:
-        return 0.0
-
-    rows = frappe.get_all(
-        "Stock Entry Detail",
-        filters={
-            "parent": ["in", se_names],
-            "t_warehouse": wip_warehouse,
-        },
-        fields=["basic_amount", "amount"],
-    )
-
-    total = 0.0
-    for r in rows:
-        value = r.get("basic_amount") or r.get("amount") or 0.0
-        total += float(value)
-
-    return total
 
 
 def recalculate_costing_for_work_order(work_order_name):

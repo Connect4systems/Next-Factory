@@ -1,5 +1,19 @@
 frappe.ui.form.on("Stock Entry", {
   refresh(frm) {
+    if (cint(frm.doc.custom_is_mold_material_issue)) {
+      ["stock_entry_type", "purpose", "company", "work_order"].forEach((fieldname) => {
+        if (frm.fields_dict[fieldname]) {
+          frm.set_df_property(fieldname, "read_only", 1);
+        }
+      });
+      frm.set_intro(
+        frm.doc.custom_mold_issue_channel === "Continuous"
+          ? __("Continuous-production Mold Material Issue. This entry is submitted automatically.")
+          : __("Review the Mold Material Issue and submit it when the materials are taken."),
+        "blue"
+      );
+      return;
+    }
     if (!cint(frm.doc.custom_is_additional_material)) return;
 
     if (!frm.doc.custom_sub_pick_list) {

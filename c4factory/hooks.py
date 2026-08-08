@@ -50,25 +50,30 @@ doc_events = {
     "Stock Entry": {
         "validate": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
+            "c4factory.api.work_order_mold.validate_mold_material_issue",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_wip_target_warehouse",
         ],
         "before_submit": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
+            "c4factory.api.work_order_mold.validate_mold_material_issue",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_wip_target_warehouse",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_pick_list_transferred_production_qty",
         ],
         "on_submit": [
             "c4factory.c4_manufacturing.stock_entry_hooks.apply_additional_material_to_work_order",
             "c4factory.c4_manufacturing.stock_entry_hooks.on_submit_update_work_order_costing",
+            "c4factory.api.work_order_mold.sync_mold_material_balances",
             "c4factory.api.work_order_flow.on_stock_entry_submit",
             "c4factory.c4factory.doctype.sub_pick_list.sub_pick_list.update_from_stock_entry",
         ],
         "on_cancel": [
             "c4factory.c4_manufacturing.stock_entry_hooks.reverse_additional_material_from_work_order",
+            "c4factory.api.work_order_mold.sync_mold_material_balances",
             "c4factory.api.work_order_flow.on_stock_entry_cancel",
             "c4factory.c4factory.doctype.sub_pick_list.sub_pick_list.update_from_stock_entry",
         ],
         "on_trash": "c4factory.api.work_order_flow.on_stock_entry_trash",
+        "after_delete": "c4factory.api.work_order_mold.sync_mold_material_balances",
     },
 
     # Job Card – keep partial completion from becoming process loss
@@ -117,6 +122,7 @@ patches = [
     "c4factory.patches.v1_0.setup_continuous_start_transfer",
     "c4factory.patches.v1_0.setup_continuous_start_pick_list_field",
     "c4factory.patches.v1_0.setup_continuous_start_qty_field",
+    "c4factory.patches.v1_0.setup_work_order_mold_flow",
 ]
 
 override_doctype_dashboards = {
