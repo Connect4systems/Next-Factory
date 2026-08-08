@@ -496,6 +496,11 @@ def _build_mold_material_issue(wo, rows, qty, request_id, channel):
 	if not se.items:
 		frappe.throw(_("No Mold Material rows are eligible for {0}.").format(channel))
 	se.set_missing_values()
+	# ERPNext clears the standard Work Order link for a Material Issue while
+	# applying purpose defaults. Restore both links after missing values run.
+	se.work_order = wo.name
+	if se.meta.has_field("custom_work_order"):
+		se.custom_work_order = wo.name
 	for row, mold_row in zip(se.items, rows, strict=False):
 		row.s_warehouse = mold_row.source_warehouse
 		row.t_warehouse = None
@@ -506,10 +511,14 @@ def _build_mold_material_issue(wo, rows, qty, request_id, channel):
 def validate_mold_material_issue(doc, method: str | None = None) -> None:
 	if not flt(doc.get("custom_is_mold_material_issue")):
 		return
-	if not doc.get("work_order"):
+	work_order = doc.get("work_order") or doc.get("custom_work_order")
+	if not work_order:
 		frappe.throw(_("Mold Material Issue requires a Work Order."))
 
-	wo = frappe.get_doc("Work Order", doc.work_order)
+	doc.work_order = work_order
+	if doc.meta.has_field("custom_work_order"):
+		doc.custom_work_order = work_order
+	wo = frappe.get_doc("Work Order", work_order)
 	if wo.docstatus != 1 or wo.get("status") in {"Stopped", "Closed", "Cancelled"}:
 		frappe.throw(_("Work Order {0} is not available for Mold Material Issue.").format(wo.name))
 

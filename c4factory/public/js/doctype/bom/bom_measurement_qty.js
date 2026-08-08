@@ -2,6 +2,33 @@
 // Final logic: Area / Perimeter / Value / NOS
 // Keep Stock UOM = Item.stock_uom (do not change it logically)
 
+frappe.ui.form.on("BOM", {
+  setup(frm) {
+    configure_raw_material_item_filter(frm);
+  },
+  refresh(frm) {
+    configure_raw_material_item_filter(frm);
+  },
+  onload_post_render(frm) {
+    configure_raw_material_item_filter(frm);
+  },
+});
+
+function configure_raw_material_item_filter(frm) {
+  const apply_filter = () => {
+    frm.set_query("item_code", "items", () => ({
+      filters: {
+        include_item_in_manufacturing: 1,
+        is_fixed_asset: 0,
+        disabled: 0,
+      },
+    }));
+  };
+
+  apply_filter();
+  setTimeout(apply_filter, 0);
+}
+
 frappe.ui.form.on("BOM Item", {
   item_code: function (frm, cdt, cdn) {
     const row = frappe.get_doc(cdt, cdn);
