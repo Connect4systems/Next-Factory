@@ -9,7 +9,9 @@ class StockEntry(ERPNextStockEntry):
         reset_outgoing_rate=True,
         raise_error_if_no_rate=True,
     ):
-        if flt(self.get("custom_continuous_manufacture_transfer")):
+        if flt(self.get("custom_continuous_manufacture_transfer")) or flt(
+            self.get("custom_uses_finish_allocation")
+        ):
             reset_outgoing_rate = False
 
         return super().calculate_rate_and_amount(

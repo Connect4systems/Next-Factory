@@ -51,17 +51,24 @@ doc_events = {
         "validate": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
             "c4factory.api.work_order_mold.validate_mold_material_issue",
+            "c4factory.c4_manufacturing.stock_entry_hooks.validate_transfer_against_draft_finish",
+            "c4factory.c4_manufacturing.stock_entry_hooks.validate_finish_material_allocation",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_wip_target_warehouse",
         ],
         "before_submit": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
             "c4factory.api.work_order_mold.validate_mold_material_issue",
+            "c4factory.c4_manufacturing.stock_entry_hooks.validate_transfer_against_draft_finish",
+            "c4factory.c4_manufacturing.stock_entry_hooks.set_additional_material_allocation_qty",
+            "c4factory.c4_manufacturing.stock_entry_hooks.validate_finish_material_allocation",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_wip_target_warehouse",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_pick_list_transferred_production_qty",
         ],
+        "before_cancel": "c4factory.c4_manufacturing.stock_entry_hooks.prevent_allocated_transfer_cancel",
         "on_submit": [
             "c4factory.c4_manufacturing.stock_entry_hooks.apply_additional_material_to_work_order",
             "c4factory.c4_manufacturing.stock_entry_hooks.on_submit_update_work_order_costing",
+            "c4factory.c4_manufacturing.stock_entry_hooks.verify_final_finish_cost_reconciliation",
             "c4factory.api.work_order_mold.sync_mold_material_balances",
             "c4factory.api.work_order_flow.on_stock_entry_submit",
             "c4factory.c4factory.doctype.sub_pick_list.sub_pick_list.update_from_stock_entry",
@@ -123,6 +130,7 @@ patches = [
     "c4factory.patches.v1_0.setup_continuous_start_pick_list_field",
     "c4factory.patches.v1_0.setup_continuous_start_qty_field",
     "c4factory.patches.v1_0.setup_work_order_mold_flow",
+    "c4factory.patches.v1_0.setup_finish_material_allocation",
 ]
 
 override_doctype_dashboards = {

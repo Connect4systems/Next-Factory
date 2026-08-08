@@ -459,6 +459,7 @@ def create_mold_material_issues(
 
 
 def _build_mold_material_issue(wo, rows, qty, request_id, channel):
+	mold_account = _get_mold_clearing_account(wo.company)
 	se = frappe.new_doc("Stock Entry")
 	se.stock_entry_type = "Material Issue"
 	se.purpose = "Material Issue"
@@ -489,6 +490,7 @@ def _build_mold_material_issue(wo, rows, qty, request_id, channel):
 				"s_warehouse": mold_row.source_warehouse,
 				"is_finished_item": 0,
 				"is_scrap_item": 0,
+				"expense_account": mold_account,
 				"custom_mold_material": mold_row.name,
 			},
 		)
@@ -504,6 +506,7 @@ def _build_mold_material_issue(wo, rows, qty, request_id, channel):
 	for row, mold_row in zip(se.items, rows, strict=False):
 		row.s_warehouse = mold_row.source_warehouse
 		row.t_warehouse = None
+		row.expense_account = mold_account
 		row.custom_mold_material = mold_row.name
 	return se
 
@@ -519,8 +522,20 @@ def validate_mold_material_issue(doc, method: str | None = None) -> None:
 	if doc.meta.has_field("custom_work_order"):
 		doc.custom_work_order = work_order
 	wo = frappe.get_doc("Work Order", work_order)
-	if wo.docstatus != 1 or wo.get("status") in {"Stopped", "Closed", "Cancelled"}:
+	if wo.docstatus != 1 or wo.get("status") in {"Stopped", "Closed", "Completed", "Cancelled"}:
 		frappe.throw(_("Work Order {0} is not available for Mold Material Issue.").format(wo.name))
+	draft_finish = frappe.db.get_value(
+		"Stock Entry",
+		{"work_order": wo.name, "docstatus": 0, "stock_entry_type": "Manufacture"},
+		"name",
+	)
+	if draft_finish:
+		frappe.throw(
+			_(
+				"Mold material cannot be issued while draft Finish Stock Entry {0} exists. "
+				"Submit or delete that Finish entry first."
+			).format(frappe.bold(draft_finish))
+		)
 
 	channel = doc.get("custom_mold_issue_channel")
 	if channel not in {CHANNEL_CONTINUOUS, CHANNEL_STANDARD}:
@@ -549,6 +564,7 @@ def validate_mold_material_issue(doc, method: str | None = None) -> None:
 	doc.purpose = "Material Issue"
 	doc.company = wo.company
 	doc.fg_completed_qty = 0
+	mold_account = _get_mold_clearing_account(wo.company)
 	if doc.meta.has_field("custom_work_order"):
 		doc.custom_work_order = wo.name
 
@@ -560,6 +576,7 @@ def validate_mold_material_issue(doc, method: str | None = None) -> None:
 		row.t_warehouse = None
 		row.is_finished_item = 0
 		row.is_scrap_item = 0
+		row.expense_account = mold_account
 		actual_qty[mold_row.name] = flt(actual_qty.get(mold_row.name)) + abs(
 			flt(row.get("transfer_qty")) or flt(row.get("qty"))
 		)
@@ -597,6 +614,32 @@ def _resolve_mold_work_order(doc) -> str | None:
 			return work_order
 
 	return None
+
+
+def _get_mold_clearing_account(company: str) -> str:
+	account = frappe.get_cached_value(
+		"Company", company, "custom_mold_production_wip_account"
+	)
+	if not account:
+		frappe.throw(
+			_("Set Mold Production/WIP Clearing Account on Company {0}.").format(
+				frappe.bold(company)
+			)
+		)
+	account_details = frappe.get_cached_value(
+		"Account", account, ["company", "is_group"], as_dict=True
+	)
+	if (
+		not account_details
+		or account_details.company != company
+		or flt(account_details.is_group)
+	):
+		frappe.throw(
+			_("Mold Production/WIP Clearing Account must be a ledger account for {0}.").format(
+				frappe.bold(company)
+			)
+		)
+	return account
 
 
 def sync_mold_material_balances(doc, method: str | None = None) -> None:

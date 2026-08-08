@@ -31,6 +31,217 @@ def _is_manufacture_like_entry(doc) -> bool:
     )
 
 
+def get_reserved_draft_finish_qty(
+    work_order: str, exclude_stock_entry: str | None = None
+) -> float:
+    """Return finished quantity reserved by open draft Manufacture entries."""
+    return flt(
+        frappe.db.sql(
+            """
+            SELECT COALESCE(SUM(fg_completed_qty), 0)
+            FROM `tabStock Entry`
+            WHERE work_order = %(work_order)s
+              AND docstatus = 0
+              AND (stock_entry_type = 'Manufacture' OR purpose = 'Manufacture')
+              AND name != %(exclude_stock_entry)s
+            """,
+            {
+                "work_order": work_order,
+                "exclude_stock_entry": exclude_stock_entry or "",
+            },
+        )[0][0]
+    )
+
+
+def validate_transfer_against_draft_finish(doc, method: str | None = None) -> None:
+    """Do not change WIP material while a draft Finish allocation is open."""
+    if not _is_material_transfer_for_manufacture(doc) or not doc.get("work_order"):
+        return
+
+    work_order_status = frappe.db.get_value("Work Order", doc.work_order, "status")
+    if work_order_status in {"Completed", "Closed", "Stopped", "Cancelled"}:
+        frappe.throw(
+            _("Material cannot be transferred while Work Order status is {0}.").format(
+                work_order_status
+            )
+        )
+
+    draft_finish = frappe.db.get_value(
+        "Stock Entry",
+        {
+            "work_order": doc.work_order,
+            "docstatus": 0,
+            "stock_entry_type": "Manufacture",
+        },
+        "name",
+    )
+    if draft_finish:
+        frappe.throw(
+            _(
+                "Material cannot be transferred while draft Finish Stock Entry {0} exists. "
+                "Submit or delete that Finish entry first."
+            ).format(frappe.bold(draft_finish))
+        )
+
+
+def prevent_allocated_transfer_cancel(doc, method: str | None = None) -> None:
+    """Require dependent Finish entries to be cancelled before their transfer."""
+    if not _is_material_transfer_for_manufacture(doc):
+        return
+    source_rows = [row.name for row in doc.get("items") or [] if row.name]
+    if not source_rows:
+        return
+    dependent_finish = frappe.db.sql(
+        """
+        SELECT se.name
+        FROM `tabStock Entry Detail` sed
+        INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+        WHERE sed.custom_source_transfer_detail IN %(source_rows)s
+          AND se.docstatus < 2
+          AND (se.stock_entry_type IN ('Manufacture', 'Process Loss')
+               OR se.purpose IN ('Manufacture', 'Process Loss'))
+        LIMIT 1
+        """,
+        {"source_rows": tuple(source_rows)},
+    )
+    if dependent_finish:
+        frappe.throw(
+            _("Cancel Finish Stock Entry {0} before cancelling this material transfer.").format(
+                frappe.bold(dependent_finish[0][0])
+            )
+        )
+
+
+def set_additional_material_allocation_qty(doc, method: str | None = None) -> None:
+    """Freeze the remaining production coverage for a submitted extra material."""
+    if not flt(doc.get("custom_is_additional_material")) or not doc.get("work_order"):
+        return
+    if flt(doc.get("custom_material_allocation_qty")) > 0:
+        return
+
+    wo = frappe.get_doc("Work Order", doc.work_order)
+    coverage_qty = max(
+        flt(wo.qty)
+        - flt(wo.produced_qty)
+        - get_reserved_draft_finish_qty(wo.name),
+        0.0,
+    )
+    if coverage_qty <= 0:
+        frappe.throw(_("No unfinished quantity remains for this additional material."))
+    doc.custom_material_allocation_qty = coverage_qty
+
+
+def validate_finish_material_allocation(doc, method: str | None = None) -> None:
+    """Keep generated Finish rows tied to their exact WIP transfer balances."""
+    if not flt(doc.get("custom_uses_finish_allocation")):
+        return
+    if not _is_manufacture_like_entry(doc) or not doc.get("work_order"):
+        frappe.throw(_("Allocated Finish Stock Entry requires a Work Order."))
+
+    wo = frappe.get_doc("Work Order", doc.work_order)
+    finished_qty = flt(doc.get("fg_completed_qty"))
+    if finished_qty <= 0:
+        frappe.throw(_("Finish quantity must be greater than zero."))
+    remaining_fg_qty = max(flt(wo.qty) - flt(wo.produced_qty), 0.0)
+    is_final_finish = abs(finished_qty - remaining_fg_qty) <= 0.000001
+    if bool(flt(doc.get("custom_is_final_finish"))) != is_final_finish:
+        frappe.throw(_("Final Finish reconciliation flag does not match the remaining quantity."))
+
+    from c4factory.api.work_order_stock import (
+        _get_allocated_mold_cost_rows,
+        _get_finish_material_allocations,
+        _get_scrap_allocations,
+    )
+
+    expected_rows = _get_finish_material_allocations(
+        wo,
+        finished_qty,
+        is_final_finish,
+        exclude_finish=doc.name,
+    )
+    expected = {
+        row["source_transfer_detail"]: row
+        for row in expected_rows
+    }
+    actual = {}
+    for row in doc.get("items") or []:
+        if flt(row.get("is_finished_item")) or flt(row.get("is_scrap_item")):
+            continue
+        source_detail = row.get("custom_source_transfer_detail")
+        if not source_detail or source_detail not in expected:
+            frappe.throw(_("Every Finish raw-material row must reference its source transfer row."))
+        if row.item_code != expected[source_detail]["item_code"]:
+            frappe.throw(_("Finish item must match source transfer item {0}.").format(source_detail))
+        row_qty = abs(
+            flt(row.get("transfer_qty")) or flt(row.get("qty"))
+        )
+        expected_rate = flt(
+            expected[source_detail].get("valuation_rate")
+            or expected[source_detail].get("basic_rate")
+        )
+        row.valuation_rate = expected_rate
+        row.basic_rate = expected_rate
+        row.amount = row_qty * expected_rate
+        row.basic_amount = row.amount
+        if row.meta.has_field("set_basic_rate_manually"):
+            row.set_basic_rate_manually = 1
+        actual[source_detail] = flt(actual.get(source_detail)) + row_qty
+
+    for source_detail, expected_row in expected.items():
+        if abs(flt(actual.get(source_detail)) - flt(expected_row["qty"])) > 0.000001:
+            frappe.throw(
+                _("Source transfer row {0} must consume quantity {1}.").format(
+                    frappe.bold(source_detail), expected_row["qty"]
+                )
+            )
+
+    expected_scrap = {
+        row.item_code: flt(row.qty)
+        for row in _get_scrap_allocations(
+            wo,
+            finished_qty,
+            is_final_finish,
+            exclude_finish=doc.name,
+        )
+    }
+    actual_scrap = {}
+    for row in doc.get("items") or []:
+        if flt(row.get("is_scrap_item")):
+            actual_scrap[row.item_code] = flt(actual_scrap.get(row.item_code)) + abs(
+                flt(row.get("transfer_qty")) or flt(row.get("qty"))
+            )
+    if set(actual_scrap) != set(expected_scrap) or any(
+        abs(flt(actual_scrap.get(item)) - qty) > 0.000001
+        for item, qty in expected_scrap.items()
+    ):
+        frappe.throw(_("Scrap rows must match the Work Order Finish allocation."))
+
+    expected_mold_cost_rows = _get_allocated_mold_cost_rows(
+        wo, finished_qty, is_final_finish
+    )
+    expected_mold_cost = sum(expected_mold_cost_rows.values())
+    doc.custom_allocated_mold_cost = expected_mold_cost
+    mold_cost_rows = [
+        row
+        for row in doc.get("additional_costs") or []
+        if (row.get("description") or "").strip() == "Mold Cost"
+    ]
+    if expected_mold_cost > 0:
+        actual_mold_cost_rows = {}
+        for mold_row in mold_cost_rows:
+            actual_mold_cost_rows[mold_row.expense_account] = (
+                flt(actual_mold_cost_rows.get(mold_row.expense_account))
+                + flt(mold_row.amount)
+            )
+        if set(actual_mold_cost_rows) != set(expected_mold_cost_rows) or any(
+            abs(flt(actual_mold_cost_rows.get(account)) - amount) > 0.000001
+            for account, amount in expected_mold_cost_rows.items()
+        ):
+            frappe.throw(_("Mold Cost additional-cost rows do not match issued mold cost."))
+    elif mold_cost_rows:
+        frappe.throw(_("This Finish Stock Entry must not contain a Mold Cost row."))
+
+
 def validate_additional_material_transfer(doc, method: str | None = None) -> None:
     """Keep an Additional Material transfer tied to its originating Pick List."""
     if not flt(doc.get("custom_is_additional_material")):
@@ -596,6 +807,7 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
 
     finished_rows = []
     raw_material_cost = 0.0
+    scrap_material_credit = 0.0
     transferred_rate_map = None
     pick_lists = set()
 
@@ -610,6 +822,15 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
             continue
 
         if is_scrap:
+            scrap_amount = abs(flt(row.get("basic_amount") or row.get("amount")))
+            if scrap_amount <= 0 and qty > 0:
+                scrap_rate = _get_stock_entry_row_rate(row)
+                if scrap_rate <= 0 and row.get("item_code"):
+                    scrap_rate = flt(
+                        frappe.get_cached_value("Item", row.item_code, "valuation_rate")
+                    )
+                scrap_amount = qty * scrap_rate
+            scrap_material_credit += scrap_amount
             continue
 
         pick_list = _get_pick_list_from_stock_entry_row(row)
@@ -646,19 +867,68 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
     wo_produced_before = max(flt(getattr(wo_doc, "produced_qty", 0)), 0.0)
     wo_produced_after = max(wo_produced_before + finished_qty, finished_qty)
 
-    if pick_lists:
-        allocated_op_cost = _get_work_order_operating_cost_from_job_cards(
-            wo_doc.name, pick_lists=pick_lists
+    total_op_cost = _get_work_order_operating_cost_from_job_cards(wo_doc.name)
+    prior_allocated_op_cost = 0.0
+    if doc.meta.has_field("custom_allocated_operation_cost"):
+        prior_allocated_op_cost = flt(
+            frappe.db.sql(
+                """
+                SELECT COALESCE(SUM(custom_allocated_operation_cost), 0)
+                FROM `tabStock Entry`
+                WHERE work_order = %(work_order)s
+                  AND docstatus = 1
+                  AND name != %(current)s
+                  AND (stock_entry_type = 'Manufacture' OR purpose = 'Manufacture')
+                """,
+                {"work_order": wo_doc.name, "current": doc.name or ""},
+            )[0][0]
         )
+        legacy_values = frappe.db.sql(
+            """
+            SELECT
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(sed.is_finished_item, 0) = 1
+                     AND COALESCE(sed.is_scrap_item, 0) = 0
+                    THEN ABS(sed.basic_amount) ELSE 0 END), 0) AS fg_value,
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(sed.is_finished_item, 0) = 0
+                     AND COALESCE(sed.is_scrap_item, 0) = 0
+                    THEN ABS(sed.basic_amount) ELSE 0 END), 0) AS raw_value
+            FROM `tabStock Entry Detail` sed
+            INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.work_order = %(work_order)s
+              AND se.docstatus = 1
+              AND COALESCE(se.custom_uses_finish_allocation, 0) = 0
+              AND (se.stock_entry_type = 'Manufacture' OR se.purpose = 'Manufacture')
+            """,
+            {"work_order": wo_doc.name},
+            as_dict=True,
+        )[0]
+        prior_allocated_op_cost += max(
+            flt(legacy_values.fg_value) - flt(legacy_values.raw_value), 0.0
+        )
+
+    remaining_op_cost = max(total_op_cost - prior_allocated_op_cost, 0.0)
+    is_final_finish = bool(flt(doc.get("custom_is_final_finish")))
+    if is_final_finish:
+        allocated_op_cost = remaining_op_cost
     else:
-        total_op_cost = _get_work_order_operating_cost_from_job_cards(wo_doc.name)
+        cumulative_op_target = total_op_cost * wo_produced_after / (wo_qty or 1.0)
+        allocated_op_cost = min(
+            max(cumulative_op_target - prior_allocated_op_cost, 0.0),
+            remaining_op_cost,
+        )
+    if doc.meta.has_field("custom_allocated_operation_cost"):
+        doc.custom_allocated_operation_cost = allocated_op_cost
 
-        # Allocate operation cost to this finish quantity.
-        op_basis_qty = wo_produced_after if wo_produced_after > 0 else wo_qty
-        op_share = (finished_qty / op_basis_qty) if op_basis_qty > 0 else 0.0
-        allocated_op_cost = total_op_cost * op_share
-
-    total_fg_amount = raw_material_cost + allocated_op_cost
+    allocated_mold_cost = flt(doc.get("custom_allocated_mold_cost"))
+    total_fg_amount = max(
+        raw_material_cost
+        + allocated_op_cost
+        + allocated_mold_cost
+        - scrap_material_credit,
+        0.0,
+    )
     fg_rate = (total_fg_amount / finished_qty) if finished_qty > 0 else 0.0
 
     for row in finished_rows:
@@ -1029,6 +1299,53 @@ def on_submit_update_work_order_costing(doc, method: str | None = None) -> None:
         return
 
     _recalculate_work_order_costs(doc.work_order)
+
+
+def verify_final_finish_cost_reconciliation(doc, method: str | None = None) -> None:
+    """Ensure final finished-goods value equals the final Work Order cost."""
+    if not flt(doc.get("custom_uses_finish_allocation")) or not flt(
+        doc.get("custom_is_final_finish")
+    ):
+        return
+
+    legacy_finish_exists = frappe.db.exists(
+        "Stock Entry",
+        {
+            "work_order": doc.work_order,
+            "docstatus": 1,
+            "stock_entry_type": "Manufacture",
+            "custom_uses_finish_allocation": 0,
+        },
+    )
+    if legacy_finish_exists:
+        return
+
+    work_order_cost = flt(
+        frappe.db.get_value("Work Order", doc.work_order, "c4_total_cost")
+    )
+    finished_goods_value = flt(
+        frappe.db.sql(
+            """
+            SELECT COALESCE(SUM(ABS(sed.basic_amount)), 0)
+            FROM `tabStock Entry Detail` sed
+            INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.work_order = %s
+              AND se.docstatus = 1
+              AND (se.stock_entry_type = 'Manufacture' OR se.purpose = 'Manufacture')
+              AND COALESCE(sed.is_finished_item, 0) = 1
+              AND COALESCE(sed.is_scrap_item, 0) = 0
+            """,
+            (doc.work_order,),
+        )[0][0]
+    )
+    variance = work_order_cost - finished_goods_value
+    if abs(variance) > 0.05:
+        frappe.throw(
+            _(
+                "Final Finish cost reconciliation failed. Work Order cost is {0}, "
+                "finished-product value is {1}, and variance is {2}."
+            ).format(work_order_cost, finished_goods_value, variance)
+        )
 
 
 @frappe.whitelist()

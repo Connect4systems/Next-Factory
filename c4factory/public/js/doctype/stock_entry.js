@@ -1,5 +1,23 @@
 frappe.ui.form.on("Stock Entry", {
   refresh(frm) {
+    if (cint(frm.doc.custom_uses_finish_allocation)) {
+      const items_grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+      if (items_grid) {
+        items_grid.cannot_add_rows = true;
+        items_grid.cannot_delete_rows = true;
+        items_grid.df.cannot_add_rows = 1;
+        items_grid.df.cannot_delete_rows = 1;
+        ["item_code", "qty", "s_warehouse", "t_warehouse", "is_finished_item", "is_scrap_item"]
+          .forEach((fieldname) => items_grid.update_docfield_property(fieldname, "read_only", 1));
+        items_grid.refresh();
+      }
+      frm.set_intro(
+        cint(frm.doc.custom_is_final_finish)
+          ? __("Final Finish: all remaining transferred material and cost balances are reconciled here.")
+          : __("Material quantities are allocated from exact submitted WIP transfer balances."),
+        "blue"
+      );
+    }
     if (cint(frm.doc.custom_is_mold_material_issue)) {
       ["stock_entry_type", "purpose", "company", "work_order"].forEach((fieldname) => {
         if (frm.fields_dict[fieldname]) {
