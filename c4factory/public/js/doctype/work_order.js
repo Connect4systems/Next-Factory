@@ -11,11 +11,14 @@ frappe.ui.form.on("Work Order", {
     configure_mold_bom_queries(frm);
     configure_create_mold_button(frm);
     register_mold_issue_listener();
+    configure_timesheet_button(frm);
+    hide_material_consumption_button(frm);
   },
   onload_post_render(frm) {
     configure_required_items_grid(frm);
     hide_create_job_card_button(frm);
     configure_mold_bom_queries(frm);
+    hide_material_consumption_button(frm);
   },
   bom_no(frm) {
     setTimeout(() => set_source_warehouses(frm), 800);
@@ -340,6 +343,43 @@ function hide_create_job_card_button(frm) {
   remove_buttons();
   setTimeout(remove_buttons, 300);
   setTimeout(remove_buttons, 1000);
+}
+
+function hide_material_consumption_button(frm) {
+  const remove_button = () => {
+    frm.remove_custom_button(__("Material Consumption"));
+    frm.remove_custom_button(__("Material Consumption"), __("Create"));
+  };
+
+  remove_button();
+  setTimeout(remove_button, 0);
+  setTimeout(remove_button, 300);
+  setTimeout(remove_button, 1000);
+}
+
+function configure_timesheet_button(frm) {
+  const replace_button = () => {
+    frm.remove_custom_button(__("Create Timesheet"));
+
+    if (
+      frm.doc.docstatus !== 1 ||
+      ["Stopped", "Closed", "Cancelled"].includes(frm.doc.status)
+    ) {
+      return;
+    }
+
+    frm.add_custom_button(__("Create Timesheet"), () => {
+      frappe.model.open_mapped_doc({
+        method: "c4factory.api.work_order_timesheet.make_timesheet",
+        frm,
+      });
+    });
+  };
+
+  replace_button();
+  setTimeout(replace_button, 0);
+  setTimeout(replace_button, 300);
+  setTimeout(replace_button, 1000);
 }
 
 function configure_continuous_start_button(frm) {

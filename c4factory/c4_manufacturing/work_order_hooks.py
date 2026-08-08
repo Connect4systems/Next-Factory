@@ -77,7 +77,7 @@ def update_scrap_and_costing(doc, method=None):
     - Compute:
         c4_scrap_material_cost  = sum(scrap.amount)
         c4_raw_material_cost    = transfers to WIP + submitted mold Material Issues
-        c4_operating_cost       = actual Job Card operating cost
+        c4_operating_cost       = actual Job Card + submitted Timesheet cost
         c4_total_cost           = raw + operating - scrap
     """
 
@@ -101,10 +101,8 @@ def update_scrap_and_costing(doc, method=None):
     raw_material_cost = _get_raw_material_cost_from_material_transfers(doc.name, doc.wip_warehouse)
     doc.c4_raw_material_cost = raw_material_cost
 
-    # --- 3) Operating Cost from actual Job Cards ---
-    from c4factory.c4_manufacturing.stock_entry_hooks import _get_work_order_operating_cost_from_job_cards
-
-    operating_cost = _get_work_order_operating_cost_from_job_cards(doc.name)
+    # --- 3) Operating Cost from actual Job Cards and submitted Timesheets ---
+    operating_cost = _get_work_order_operating_cost(doc.name)
 
     doc.c4_operating_cost = operating_cost
 
@@ -114,6 +112,51 @@ def update_scrap_and_costing(doc, method=None):
     scrap = doc.c4_scrap_material_cost or 0.0
 
     doc.c4_total_cost = float(raw) + float(op) - float(scrap)
+
+
+def _get_work_order_operating_cost(work_order_name: str) -> float:
+    """Return Job Card cost plus submitted Timesheet cost for a Work Order."""
+    from c4factory.c4_manufacturing.stock_entry_hooks import (
+        _get_work_order_operating_cost_from_job_cards,
+    )
+
+    return _get_work_order_operating_cost_from_job_cards(
+        work_order_name
+    ) + _get_work_order_timesheet_cost(work_order_name)
+
+
+def _get_work_order_timesheet_cost(work_order_name: str) -> float:
+    """Return submitted Timesheet costing amounts linked to a Work Order."""
+    if not work_order_name:
+        return 0.0
+
+    try:
+        timesheet_meta = frappe.get_meta("Timesheet")
+    except Exception:
+        return 0.0
+
+    if not timesheet_meta.has_field("custom_work_order"):
+        return 0.0
+
+    if timesheet_meta.has_field("base_total_costing_amount"):
+        cost_field = "base_total_costing_amount"
+    elif timesheet_meta.has_field("total_costing_amount"):
+        cost_field = "total_costing_amount"
+    else:
+        return 0.0
+
+    return float(
+        frappe.db.sql(
+            f"""
+            SELECT COALESCE(SUM(`{cost_field}`), 0)
+            FROM `tabTimesheet`
+            WHERE custom_work_order = %s
+              AND docstatus = 1
+            """,
+            (work_order_name,),
+        )[0][0]
+        or 0
+    )
 
 
 def _get_raw_material_cost_from_material_transfers(work_order_name, wip_warehouse):

@@ -895,7 +895,9 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
     wo_produced_before = max(flt(getattr(wo_doc, "produced_qty", 0)), 0.0)
     wo_produced_after = max(wo_produced_before + finished_qty, finished_qty)
 
-    total_op_cost = _get_work_order_operating_cost_from_job_cards(wo_doc.name)
+    from c4factory.c4_manufacturing.work_order_hooks import _get_work_order_operating_cost
+
+    total_op_cost = _get_work_order_operating_cost(wo_doc.name)
     prior_allocated_op_cost = 0.0
     if doc.meta.has_field("custom_allocated_operation_cost"):
         prior_allocated_op_cost = flt(
@@ -1402,7 +1404,7 @@ def _recalculate_work_order_costs(work_order_name: str) -> None:
           * mold raw cost is counted on its flagged Material Issue
             so neither is counted a second time during manufacture
       - Use transfer_qty * basic_rate as the amount
-    - Operating Cost = sum of actual Job Card operating cost
+    - Operating Cost = actual Job Card cost + submitted linked Timesheet cost
     - Total Cost = Raw + Operating - Scrap
     """
     wo = frappe.get_doc("Work Order", work_order_name)
@@ -1448,8 +1450,10 @@ def _recalculate_work_order_costs(work_order_name: str) -> None:
         ):
             raw_material_cost += amount
 
-    # Operating cost from actual Job Cards linked to the Work Order
-    operating_cost = _get_work_order_operating_cost_from_job_cards(work_order_name)
+    # Operating cost from actual Job Cards and submitted linked Timesheets
+    from c4factory.c4_manufacturing.work_order_hooks import _get_work_order_operating_cost
+
+    operating_cost = _get_work_order_operating_cost(work_order_name)
 
     # Write back to Work Order custom fields
     wo.db_set("c4_raw_material_cost", raw_material_cost)

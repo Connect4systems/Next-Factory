@@ -16,6 +16,7 @@ doctype_js = {
     "Stock Entry": "public/js/doctype/stock_entry.js",
     "BOM": "public/js/doctype/bom/bom_measurement_qty.js",
     "Work Order": "public/js/doctype/work_order.js",
+    "Timesheet": "public/js/doctype/timesheet.js",
     "Job Card": "public/js/doctype/job_card.js",
 
     # moved from c4napata → c4factory
@@ -96,6 +97,14 @@ doc_events = {
         "on_submit": "c4factory.c4_manufacturing.job_card_hooks.sync_work_order_costing_from_job_card",
         "on_cancel": "c4factory.c4_manufacturing.job_card_hooks.sync_work_order_costing_from_job_card",
     },
+
+    # Timesheet - carry the Work Order project and keep WO costing in sync
+    "Timesheet": {
+        "before_validate": "c4factory.c4_manufacturing.timesheet_hooks.set_work_order_project",
+        "on_submit": "c4factory.c4_manufacturing.timesheet_hooks.sync_work_order_costing",
+        "on_cancel": "c4factory.c4_manufacturing.timesheet_hooks.sync_work_order_costing",
+        "on_update_after_submit": "c4factory.c4_manufacturing.timesheet_hooks.sync_work_order_costing",
+    },
 }
 
 # ---------------------------------------------------------
@@ -132,6 +141,7 @@ patches = [
     "c4factory.patches.v1_0.setup_work_order_mold_flow",
     "c4factory.patches.v1_0.setup_finish_material_allocation",
     "c4factory.patches.v1_0.move_mold_cost_account_to_manufacturing_settings",
+    "c4factory.patches.v1_0.setup_timesheet_work_order",
 ]
 
 override_doctype_dashboards = {
