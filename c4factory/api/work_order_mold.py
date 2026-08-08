@@ -511,7 +511,7 @@ def _build_mold_material_issue(wo, rows, qty, request_id, channel):
 def validate_mold_material_issue(doc, method: str | None = None) -> None:
 	if not flt(doc.get("custom_is_mold_material_issue")):
 		return
-	work_order = doc.get("work_order") or doc.get("custom_work_order")
+	work_order = _resolve_mold_work_order(doc)
 	if not work_order:
 		frappe.throw(_("Mold Material Issue requires a Work Order."))
 
@@ -573,6 +573,30 @@ def validate_mold_material_issue(doc, method: str | None = None) -> None:
 					frappe.bold(mold_row.item_code), expected_qty
 				)
 			)
+
+
+def _resolve_mold_work_order(doc) -> str | None:
+	work_order = doc.get("work_order") or doc.get("custom_work_order")
+	if work_order:
+		return work_order
+
+	request_id = doc.get("custom_mold_issue_request_id")
+	if request_id:
+		work_order = frappe.db.get_value(
+			"Work Order", {"custom_mold_issue_request_id": request_id}, "name"
+		)
+		if work_order:
+			return work_order
+
+	for row in doc.get("items") or []:
+		mold_material = row.get("custom_mold_material")
+		if not mold_material:
+			continue
+		work_order = frappe.db.get_value("Mold Material", mold_material, "parent")
+		if work_order:
+			return work_order
+
+	return None
 
 
 def sync_mold_material_balances(doc, method: str | None = None) -> None:
