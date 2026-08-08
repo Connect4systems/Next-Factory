@@ -139,9 +139,20 @@ def validate_finish_material_allocation(doc, method: str | None = None) -> None:
         frappe.throw(_("Allocated Finish Stock Entry requires a Work Order."))
 
     wo = frappe.get_doc("Work Order", doc.work_order)
-    finished_qty = flt(doc.get("fg_completed_qty"))
+    row_finished_qty = sum(
+        abs(flt(row.get("transfer_qty")) or flt(row.get("qty")))
+        for row in doc.get("items") or []
+        if flt(row.get("is_finished_item"))
+        and not flt(row.get("is_scrap_item"))
+    )
+    finished_qty = row_finished_qty or flt(doc.get("fg_completed_qty"))
     if finished_qty <= 0:
         frappe.throw(_("Finish quantity must be greater than zero."))
+    doc.fg_completed_qty = finished_qty
+    if hasattr(doc, "manufactured_qty"):
+        doc.manufactured_qty = finished_qty
+    if hasattr(doc, "for_quantity"):
+        doc.for_quantity = finished_qty
     remaining_fg_qty = max(flt(wo.qty) - flt(wo.produced_qty), 0.0)
     is_final_finish = abs(finished_qty - remaining_fg_qty) <= 0.000001
     if bool(flt(doc.get("custom_is_final_finish"))) != is_final_finish:

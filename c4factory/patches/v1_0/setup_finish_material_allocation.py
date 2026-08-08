@@ -5,13 +5,13 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 def execute():
 	create_custom_fields(
 		{
-			"Company": [
+			"Manufacturing Settings": [
 				{
-					"fieldname": "custom_mold_production_wip_account",
-					"label": "Mold Production/WIP Clearing Account",
+					"fieldname": "custom_mold_cost_expense_account",
+					"label": "Mold Cost Expense Account",
 					"fieldtype": "Link",
 					"options": "Account",
-					"insert_after": "default_expense_account",
+					"insert_after": "default_scrap_warehouse",
 					"description": "Clearing account used to capitalize issued mold cost into finished products.",
 				},
 			],
@@ -92,5 +92,5 @@ def execute():
 		"""
 	)
 
-	for doctype in ("Company", "Stock Entry", "Stock Entry Detail"):
+	for doctype in ("Manufacturing Settings", "Stock Entry", "Stock Entry Detail"):
 		frappe.clear_cache(doctype=doctype)

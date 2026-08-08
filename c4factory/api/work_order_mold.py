@@ -617,15 +617,11 @@ def _resolve_mold_work_order(doc) -> str | None:
 
 
 def _get_mold_clearing_account(company: str) -> str:
-	account = frappe.get_cached_value(
-		"Company", company, "custom_mold_production_wip_account"
+	account = frappe.db.get_single_value(
+		"Manufacturing Settings", "custom_mold_cost_expense_account"
 	)
 	if not account:
-		frappe.throw(
-			_("Set Mold Production/WIP Clearing Account on Company {0}.").format(
-				frappe.bold(company)
-			)
-		)
+		frappe.throw(_("Set Mold Cost Expense Account in Manufacturing Settings."))
 	account_details = frappe.get_cached_value(
 		"Account", account, ["company", "is_group"], as_dict=True
 	)
@@ -635,7 +631,7 @@ def _get_mold_clearing_account(company: str) -> str:
 		or flt(account_details.is_group)
 	):
 		frappe.throw(
-			_("Mold Production/WIP Clearing Account must be a ledger account for {0}.").format(
+			_("Mold Cost Expense Account must be a ledger account for {0}.").format(
 				frappe.bold(company)
 			)
 		)

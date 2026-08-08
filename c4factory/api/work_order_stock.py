@@ -179,7 +179,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
             or flt(account_details.is_group)
         ):
             frappe.throw(
-                _("Mold Production/WIP Clearing Account must be a ledger account for {0}.").format(
+                _("Mold Cost Expense Account must be a ledger account for {0}.").format(
                     frappe.bold(wo.company)
                 )
             )
