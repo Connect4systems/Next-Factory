@@ -1,0 +1,134 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-10-01 10:36:39.056212",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item",
+  "item_name",
+  "description",
+  "qty",
+  "bom",
+  "create_bom",
+  "section_break_razl",
+  "wood",
+  "metal",
+  "column_break_nale",
+  "glass",
+  "fabric",
+  "column_break_yvsv",
+  "other",
+  "column_break_epzy",
+  "additional_notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_preview": 1,
+   "label": "Item",
+   "options": "Item"
+  },
+  {
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name"
+  },
+  {
+   "fetch_from": "item.description",
+   "fieldname": "description",
+   "fieldtype": "Text Editor",
+   "in_list_view": 1,
+   "label": "Description"
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "QTY"
+  },
+  {
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "BOM",
+   "options": "BOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "create_bom",
+   "fieldtype": "Button",
+   "in_list_view": 1,
+   "label": "Create BOM"
+  },
+  {
+   "fieldname": "section_break_razl",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_nale",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wood",
+   "fieldtype": "Link",
+   "label": "Wood",
+   "options": "P-Wood"
+  },
+  {
+   "fieldname": "column_break_yvsv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_epzy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "metal",
+   "fieldtype": "Link",
+   "label": "Metal",
+   "options": "P-Metal"
+  },
+  {
+   "fieldname": "glass",
+   "fieldtype": "Link",
+   "label": "Glass",
+   "options": "P-Glass"
+  },
+  {
+   "fieldname": "fabric",
+   "fieldtype": "Link",
+   "label": "Fabric",
+   "options": "P-Fabric"
+  },
+  {
+   "fieldname": "other",
+   "fieldtype": "Small Text",
+   "label": "Other"
+  },
+  {
+   "fieldname": "additional_notes",
+   "fieldtype": "Text",
+   "label": "Additional Notes"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-06 11:17:24.858569",
+ "modified_by": "Administrator",
+ "module": "C4Factory",
+ "name": "Contract BOM Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

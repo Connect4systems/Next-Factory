@@ -1,0 +1,16 @@
+[pre_model_sync]
+# Patches added in this section will be executed before doctypes are migrated
+# Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
+
+[post_model_sync]
+# Patches added in this section will be executed after doctypes are migrated
+
+c4factory.patches.v1_0.setup_work_order_custom_fields
+c4factory.patches.v1_0.set_c4_operating_cost_read_only
+c4factory.patches.v1_0.setup_manual_pick_list_completion
+c4factory.patches.v1_0.setup_additional_material_flow
+c4factory.patches.v1_0.setup_sub_pick_list_stock_fields
+c4factory.patches.v1_0.setup_work_order_additional_material_table
+c4factory.patches.v1_0.setup_continuous_start_transfer
+c4factory.patches.v1_0.setup_continuous_start_pick_list_field
+c4factory.patches.v1_0.setup_continuous_start_qty_field

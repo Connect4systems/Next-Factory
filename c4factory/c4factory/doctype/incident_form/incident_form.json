@@ -1,0 +1,225 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:naming_series",
+ "creation": "2025-12-13 19:50:14.789582",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "injured_person",
+  "incident_type",
+  "type",
+  "column_break_pdab",
+  "date",
+  "time_fgcf",
+  "location",
+  "section_break_ibpu",
+  "employee",
+  "employee_name",
+  "column_break_qjnx",
+  "department",
+  "job_title",
+  "report_to",
+  "section_break_qqiz",
+  "activity_at_time_of_incident",
+  "incident_description",
+  "attach_photo",
+  "column_break_iclo",
+  "location_of_incident",
+  "consequences",
+  "section_break_toe2",
+  "amended_from",
+  "naming_series"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_toe2",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Incident Form",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Employee Name"
+  },
+  {
+   "fieldname": "column_break_pdab",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Today",
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "label": "Date"
+  },
+  {
+   "default": "Now",
+   "fieldname": "time_fgcf",
+   "fieldtype": "Time",
+   "label": "Time"
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Link",
+   "label": "Location",
+   "options": "Location"
+  },
+  {
+   "fetch_from": "employee.department",
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "label": "Department",
+   "options": "Department"
+  },
+  {
+   "fieldname": "injured_person",
+   "fieldtype": "Select",
+   "in_filter": 1,
+   "in_list_view": 1,
+   "in_preview": 1,
+   "in_standard_filter": 1,
+   "label": "Injured Person",
+   "options": "Employee\nContractor",
+   "translatable": 1
+  },
+  {
+   "fieldname": "section_break_ibpu",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_qjnx",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "incident_type",
+   "fieldtype": "Select",
+   "in_filter": 1,
+   "in_list_view": 1,
+   "in_preview": 1,
+   "in_standard_filter": 1,
+   "label": "Incident Type",
+   "options": "Near Miss\nFirst Aid\nHurt\nMedical Treatment Beyond\nWork Related Lost Time Injury\nWork Related Illness\nFatality",
+   "reqd": 1,
+   "translatable": 1
+  },
+  {
+   "fetch_from": "employee.designation",
+   "fieldname": "job_title",
+   "fieldtype": "Link",
+   "label": "Job Title",
+   "options": "Designation"
+  },
+  {
+   "fetch_from": "employee.reports_to",
+   "fieldname": "report_to",
+   "fieldtype": "Link",
+   "label": "Report To",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "section_break_qqiz",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "activity_at_time_of_incident",
+   "fieldtype": "Data",
+   "label": "Activity at Time of Incident"
+  },
+  {
+   "fieldname": "column_break_iclo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "location_of_incident",
+   "fieldtype": "Data",
+   "label": "Location of Incident"
+  },
+  {
+   "fieldname": "incident_description",
+   "fieldtype": "Text Editor",
+   "label": "Incident Description"
+  },
+  {
+   "fieldname": "attach_photo",
+   "fieldtype": "Attach Image",
+   "label": "Attach Photo"
+  },
+  {
+   "fieldname": "consequences",
+   "fieldtype": "Text Editor",
+   "label": "Consequences"
+  },
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "IF-.YY.-.###"
+  },
+  {
+   "fieldname": "type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Incident\nNearmiss"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-12-15 12:29:04.811205",
+ "modified_by": "Administrator",
+ "module": "C4Factory",
+ "name": "Incident Form",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
