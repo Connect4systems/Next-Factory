@@ -112,6 +112,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
         row = se.append("items", {
             "item_code": item["item_code"],
             "qty": item["qty"],
+            "s_warehouse": wo.wip_warehouse,
             "uom": item["stock_uom"],
             "stock_uom": item["stock_uom"],
             "conversion_factor": 1,
@@ -144,6 +145,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
             scrap_row = se.append("items", {
                 "item_code": row.item_code,
                 "qty": qty,
+                "t_warehouse": wo.scrap_warehouse,
                 "uom": row.stock_uom,
                 "stock_uom": row.stock_uom,
                 "conversion_factor": 1,
@@ -157,6 +159,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
     fg_row = se.append("items", {
         "item_code": wo.production_item,
         "qty": fg_qty,
+        "t_warehouse": wo.fg_warehouse,
         "uom": wo.stock_uom,
         "stock_uom": wo.stock_uom,
         "conversion_factor": 1,

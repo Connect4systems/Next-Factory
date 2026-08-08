@@ -237,20 +237,37 @@ def validate_finish_material_allocation(doc, method: str | None = None) -> None:
         for row in doc.get("additional_costs") or []
         if (row.get("description") or "").strip() == "Mold Cost"
     ]
-    if expected_mold_cost > 0:
-        actual_mold_cost_rows = {}
-        for mold_row in mold_cost_rows:
-            actual_mold_cost_rows[mold_row.expense_account] = (
-                flt(actual_mold_cost_rows.get(mold_row.expense_account))
-                + flt(mold_row.amount)
+    actual_mold_cost_rows = {}
+    for mold_row in mold_cost_rows:
+        actual_mold_cost_rows[mold_row.expense_account] = (
+            flt(actual_mold_cost_rows.get(mold_row.expense_account))
+            + flt(mold_row.amount)
+        )
+    mold_rows_match = set(actual_mold_cost_rows) == set(
+        expected_mold_cost_rows
+    ) and all(
+        abs(flt(actual_mold_cost_rows.get(account)) - amount) <= 0.000001
+        for account, amount in expected_mold_cost_rows.items()
+    )
+    if not mold_rows_match:
+        # ERPNext clears Additional Costs when rate calculation runs before an
+        # incoming warehouse is present. Rebuild these controlled rows so old
+        # drafts and client-side omissions repair themselves on save.
+        for mold_row in list(mold_cost_rows):
+            doc.remove(mold_row)
+        for account, amount in expected_mold_cost_rows.items():
+            doc.append(
+                "additional_costs",
+                {
+                    "expense_account": account,
+                    "description": "Mold Cost",
+                    "amount": amount,
+                },
             )
-        if set(actual_mold_cost_rows) != set(expected_mold_cost_rows) or any(
-            abs(flt(actual_mold_cost_rows.get(account)) - amount) > 0.000001
-            for account, amount in expected_mold_cost_rows.items()
-        ):
-            frappe.throw(_("Mold Cost additional-cost rows do not match issued mold cost."))
-    elif mold_cost_rows:
-        frappe.throw(_("This Finish Stock Entry must not contain a Mold Cost row."))
+        doc.calculate_rate_and_amount(
+            reset_outgoing_rate=False,
+            raise_error_if_no_rate=False,
+        )
 
 
 def validate_additional_material_transfer(doc, method: str | None = None) -> None:
@@ -932,26 +949,26 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
     if doc.meta.has_field("custom_allocated_operation_cost"):
         doc.custom_allocated_operation_cost = allocated_op_cost
 
-    allocated_mold_cost = flt(doc.get("custom_allocated_mold_cost"))
-    total_fg_amount = max(
+    total_fg_basic_amount = max(
         raw_material_cost
         + allocated_op_cost
-        + allocated_mold_cost
         - scrap_material_credit,
         0.0,
     )
-    fg_rate = (total_fg_amount / finished_qty) if finished_qty > 0 else 0.0
+    fg_basic_rate = (
+        total_fg_basic_amount / finished_qty if finished_qty > 0 else 0.0
+    )
 
     for row in finished_rows:
         row_qty = abs(flt(row.get("transfer_qty")) or flt(row.get("qty")))
         if row_qty <= 0:
             continue
         row.qty = row_qty
-        row.basic_rate = fg_rate
-        row.basic_amount = row_qty * fg_rate
-        row.amount = row.basic_amount
+        row.basic_rate = fg_basic_rate
+        row.basic_amount = row_qty * fg_basic_rate
+        row.amount = row.basic_amount + flt(row.get("additional_cost"))
         if hasattr(row, "valuation_rate"):
-            row.valuation_rate = fg_rate
+            row.valuation_rate = row.amount / row_qty
 
 
 def _get_stock_entry_row_rate(row) -> float:
@@ -1337,7 +1354,7 @@ def verify_final_finish_cost_reconciliation(doc, method: str | None = None) -> N
     finished_goods_value = flt(
         frappe.db.sql(
             """
-            SELECT COALESCE(SUM(ABS(sed.basic_amount)), 0)
+            SELECT COALESCE(SUM(ABS(sed.amount)), 0)
             FROM `tabStock Entry Detail` sed
             INNER JOIN `tabStock Entry` se ON se.name = sed.parent
             WHERE se.work_order = %s
