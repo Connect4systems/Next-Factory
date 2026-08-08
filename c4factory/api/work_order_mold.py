@@ -64,7 +64,7 @@ def bom_query(doctype, txt, searchfield, start, page_len, filters):
 		return []
 	filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or {})
 	production_item = filters.get("production_item")
-	expected_type = filters.get("bom_type") or "BOM"
+	expected_type = filters.get("bom_type") or "Product"
 	type_field = _get_bom_type_fieldname()
 	if not type_field:
 		return []
@@ -172,14 +172,14 @@ def validate_and_set_mold_materials(wo) -> None:
 			frappe.throw(_("Mold BOM No is required before submitting the Work Order."))
 		if wo.docstatus == 0:
 			if wo.get("bom_no"):
-				_validate_bom(wo.bom_no, wo.production_item, "BOM")
+				_validate_bom(wo.bom_no, wo.production_item, "Product")
 			wo.set("custom_mold_materials", [])
 		return
 	if mold_qty <= 0:
 		frappe.throw(_("Mold QTY must be greater than zero."))
 
 	if wo.get("bom_no"):
-		_validate_bom(wo.bom_no, wo.production_item, "BOM")
+		_validate_bom(wo.bom_no, wo.production_item, "Product")
 	_validate_bom(mold_bom_no, wo.production_item, "Mold")
 	should_rebuild = wo.docstatus == 0 or (
 		getattr(wo, "_action", None) == "submit" and not wo.get("custom_mold_materials")

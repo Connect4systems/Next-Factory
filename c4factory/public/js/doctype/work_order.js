@@ -50,7 +50,7 @@ function configure_mold_bom_queries(frm) {
       query: "c4factory.api.work_order_mold.bom_query",
       filters: {
         production_item: frm.doc.production_item,
-        bom_type: "BOM",
+        bom_type: "Product",
       },
     }));
     frm.set_query("custom_mold_bom_no", () => ({
