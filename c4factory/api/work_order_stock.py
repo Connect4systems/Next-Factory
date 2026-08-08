@@ -90,6 +90,10 @@ def make_stock_entry(work_order_id, purpose, qty=None):
     se.stock_entry_type = "Manufacture"
     se.company = wo.company
     se.work_order = wo.name
+    # Keep the standard ERPNext Work Order -> Stock Entry mapping. Project
+    # consumed-material costing groups submitted source rows by this header
+    # field, so omitting it leaves the Project total unchanged.
+    se.project = wo.project
     se.from_bom = 0  # do NOT pull from BOM
     se.use_multi_level_bom = wo.use_multi_level_bom
     se.custom_uses_finish_allocation = 1

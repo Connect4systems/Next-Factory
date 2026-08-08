@@ -49,8 +49,12 @@ doc_events = {
 
     # Stock Entry – costing + WO update
     "Stock Entry": {
+        "before_validate": (
+            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project"
+        ),
         "validate": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
+            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
             "c4factory.api.work_order_mold.validate_mold_material_issue",
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_transfer_against_draft_finish",
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_finish_material_allocation",
@@ -58,6 +62,7 @@ doc_events = {
         ],
         "before_submit": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
+            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
             "c4factory.api.work_order_mold.validate_mold_material_issue",
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_transfer_against_draft_finish",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_additional_material_allocation_qty",

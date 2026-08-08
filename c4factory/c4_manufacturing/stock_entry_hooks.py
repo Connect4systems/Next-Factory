@@ -31,6 +31,19 @@ def _is_manufacture_like_entry(doc) -> bool:
     )
 
 
+def set_work_order_project(doc, method: str | None = None) -> None:
+    """Keep every Work Order Stock Entry attributed to its Project.
+
+    ERPNext calculates Project.total_consumed_material_cost from the Stock
+    Entry header project. This also covers entries created by custom Pick List
+    and Sub Pick List flows rather than the standard Work Order mapper.
+    """
+    if not doc.get("work_order"):
+        return
+
+    doc.project = frappe.db.get_value("Work Order", doc.work_order, "project")
+
+
 def get_reserved_draft_finish_qty(
     work_order: str, exclude_stock_entry: str | None = None
 ) -> float:
