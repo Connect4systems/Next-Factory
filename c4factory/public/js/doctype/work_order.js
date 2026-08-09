@@ -13,6 +13,8 @@ frappe.ui.form.on("Work Order", {
     register_mold_issue_listener();
     configure_timesheet_button(frm);
     hide_material_consumption_button(frm);
+    configure_finish_button(frm);
+    refresh_material_transfer_progress(frm);
   },
   onload_post_render(frm) {
     configure_required_items_grid(frm);
@@ -276,6 +278,105 @@ async function refresh_material_transferred_qty(frm) {
   } finally {
     frm.__c4_syncing_transferred_qty = false;
   }
+}
+
+async function refresh_material_transfer_progress(frm) {
+  if (frm.doc.docstatus !== 1) return;
+
+  try {
+    const summary = await frappe.xcall(
+      "c4factory.api.work_order_flow.get_work_order_material_progress",
+      { wo_name: frm.doc.name }
+    );
+    if (!summary?.total_items) return;
+
+    const message = __(
+      "{0} of {1} required material item(s) have submitted transfers.",
+      [summary.transferred_items, summary.total_items]
+    );
+    frm.dashboard.add_progress(
+      __("Material Transfer"),
+      flt(summary.percent),
+      message
+    );
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function configure_finish_button(frm) {
+  if (frm.doc.docstatus !== 1) return;
+
+  const requestId = `${frm.doc.name}:${Date.now()}`;
+  frm.__c4_finish_request = requestId;
+
+  let context;
+  try {
+    context = await frappe.xcall(
+      "c4factory.api.work_order_stock.get_finish_context",
+      { work_order: frm.doc.name }
+    );
+  } catch (error) {
+    console.error(error);
+    return;
+  }
+  if (frm.__c4_finish_request !== requestId) return;
+
+  const applyButton = () => {
+    if (frm.__c4_finish_request !== requestId) return;
+    frm.remove_custom_button(__("Finish"));
+    frm.remove_custom_button(__("Finish"), __("Create"));
+    if (!context?.eligible) return;
+
+    frm.add_custom_button(__("Finish"), () => open_finish_dialog(frm, context));
+  };
+
+  applyButton();
+  setTimeout(applyButton, 300);
+  setTimeout(applyButton, 1000);
+}
+
+function open_finish_dialog(frm, context) {
+  const remainingQty = flt(context.remaining_qty);
+  frappe.prompt(
+    {
+      fieldname: "qty",
+      fieldtype: "Float",
+      label: __("Finished Quantity"),
+      default: remainingQty,
+      description: __(
+        "Consumes only submitted material currently available in WIP. Finishing the entire remaining quantity completes the Work Order and blocks later transfers."
+      ),
+      reqd: 1,
+    },
+    async ({ qty }) => {
+      qty = flt(qty);
+      if (qty <= 0 || qty > remainingQty) {
+        frappe.throw(
+          __("Finished Quantity must be greater than zero and not more than {0}.", [
+            remainingQty,
+          ])
+        );
+      }
+
+      const { message } = await frappe.call({
+        method: "c4factory.api.work_order_stock.make_stock_entry",
+        args: {
+          work_order_id: frm.doc.name,
+          purpose: "Manufacture",
+          qty,
+        },
+        freeze: true,
+        freeze_message: __("Preparing Finish Stock Entry..."),
+      });
+      const docs = frappe.model.sync(message);
+      if (docs.length) {
+        frappe.set_route("Form", docs[0].doctype, docs[0].name);
+      }
+    },
+    __("Finish"),
+    __("Create Draft")
+  );
 }
 
 function apply_required_items_grid_permissions(table_field) {

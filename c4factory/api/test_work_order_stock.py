@@ -78,6 +78,44 @@ class TestFinishMaterialAllocation(FrappeTestCase):
 
 		self.assertEqual(rows[0]["qty"], 50)
 
+	def test_partial_finish_allows_materials_from_only_some_required_rows(self):
+		wo = self._work_order()
+		wo.required_items.append(
+			frappe._dict(
+				{
+					"name": "WOI-2",
+					"item_code": "RM-2",
+					"required_qty": 20,
+					"custom_additional_material_qty": 0,
+				}
+			)
+		)
+		sources = [
+			frappe._dict(
+				{
+					"name": "SED-1",
+					"item_code": "RM-1",
+					"stock_uom": "Kg",
+					"total_qty": 50,
+					"total_amount": 500,
+					"remaining_qty": 50,
+					"custom_work_order_item": "WOI-1",
+					"custom_pick_list_item": "PLI-1",
+					"is_additional": False,
+					"allocation_coverage_qty": 0,
+				}
+			)
+		]
+		with patch(
+			"c4factory.api.work_order_stock._get_available_transfer_sources",
+			return_value=sources,
+		):
+			rows = _get_finish_material_allocations(wo, 5, False)
+
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["item_code"], "RM-1")
+		self.assertEqual(rows[0]["qty"], 50)
+
 	def test_additional_material_is_spread_over_its_remaining_coverage(self):
 		sources = [
 			frappe._dict(

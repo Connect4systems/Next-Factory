@@ -990,6 +990,72 @@ def sync_work_order_material_transfer(wo_name: str) -> float:
     )
 
 
+@frappe.whitelist()
+def get_work_order_material_progress(wo_name: str) -> dict:
+    """Return row-normalized progress for actual submitted material transfers."""
+    wo = frappe.get_doc("Work Order", wo_name)
+    wo.check_permission("read")
+    required_rows = [
+        row
+        for row in _get_wo_items(wo)
+        if row.get("item_code")
+        and flt(row.get("required_qty") or row.get("qty")) > 0
+    ]
+    if not required_rows:
+        return {"percent": 0, "transferred_items": 0, "total_items": 0}
+
+    transferred_rows = frappe.db.sql(
+        """
+        SELECT sed.custom_work_order_item,
+               sed.item_code,
+               COALESCE(SUM(ABS(sed.qty)), 0) AS transferred_qty
+        FROM `tabStock Entry Detail` sed
+        INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+        WHERE se.work_order = %(work_order)s
+          AND se.docstatus = 1
+          AND COALESCE(se.custom_is_additional_material, 0) = 0
+          AND (se.stock_entry_type = 'Material Transfer for Manufacture'
+               OR se.purpose = 'Material Transfer for Manufacture')
+          AND COALESCE(sed.is_finished_item, 0) = 0
+          AND COALESCE(sed.is_scrap_item, 0) = 0
+        GROUP BY sed.custom_work_order_item, sed.item_code
+        """,
+        {"work_order": wo.name},
+        as_dict=True,
+    )
+    by_work_order_item = {}
+    by_item_code = {}
+    for row in transferred_rows:
+        if row.custom_work_order_item:
+            by_work_order_item[row.custom_work_order_item] = (
+                flt(by_work_order_item.get(row.custom_work_order_item))
+                + flt(row.transferred_qty)
+            )
+        else:
+            by_item_code[row.item_code] = (
+                flt(by_item_code.get(row.item_code)) + flt(row.transferred_qty)
+            )
+
+    ratios = []
+    transferred_items = 0
+    for row in required_rows:
+        required_qty = flt(row.get("required_qty") or row.get("qty"))
+        transferred_qty = flt(by_work_order_item.get(row.name))
+        if transferred_qty <= 0:
+            transferred_qty = min(flt(by_item_code.get(row.item_code)), required_qty)
+            if transferred_qty > 0:
+                by_item_code[row.item_code] -= transferred_qty
+        if transferred_qty > 0:
+            transferred_items += 1
+        ratios.append(min(transferred_qty / required_qty, 1.0))
+
+    return {
+        "percent": sum(ratios) / len(ratios) * 100,
+        "transferred_items": transferred_items,
+        "total_items": len(required_rows),
+    }
+
+
 def _get_transferred_production_qty_from_stock_entries(wo_name: str) -> float:
     """
     Convert Pick List and continuous-material transfers to production quantity.

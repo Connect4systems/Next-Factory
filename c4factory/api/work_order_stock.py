@@ -255,6 +255,35 @@ def make_stock_entry(work_order_id, purpose, qty=None):
     return se.as_dict()
 
 
+@frappe.whitelist()
+def get_finish_context(work_order: str) -> dict:
+    """Return whether a Work Order has submitted, unconsumed WIP material to finish."""
+    wo = frappe.get_doc("Work Order", work_order)
+    wo.check_permission("read")
+    remaining_qty = max(flt(wo.qty) - flt(wo.produced_qty), 0.0)
+    draft_finish = frappe.db.get_value(
+        "Stock Entry",
+        {
+            "work_order": wo.name,
+            "docstatus": 0,
+            "stock_entry_type": "Manufacture",
+        },
+        "name",
+    )
+    sources = [] if draft_finish else _get_available_transfer_sources(wo)
+    return {
+        "eligible": bool(
+            wo.docstatus == 1
+            and wo.get("status") not in {"Stopped", "Closed", "Completed", "Cancelled"}
+            and remaining_qty > 0
+            and sources
+        ),
+        "remaining_qty": remaining_qty,
+        "available_material_rows": len(sources),
+        "draft_finish": draft_finish,
+    }
+
+
 def _get_finish_material_allocations(
     wo, fg_qty: float, is_final_finish: bool, exclude_finish: str | None = None
 ):
@@ -289,25 +318,6 @@ def _get_finish_material_allocations(
             source.base_key = source.custom_work_order_item
         else:
             source.base_key = required_item_by_code.get(source.item_code)
-
-    max_finishable = max(flt(wo.qty) - flt(wo.produced_qty), 0.0)
-    for required in required_rows.values():
-        available_qty = sum(
-            flt(source.remaining_qty)
-            for source in sources
-            if source.base_key == required.name
-        )
-        max_finishable = min(
-            max_finishable,
-            available_qty / required.per_unit_qty if required.per_unit_qty > 0 else 0.0,
-        )
-
-    if required_rows and fg_qty > max_finishable + 0.000001:
-        frappe.throw(
-            _(
-                "Only {0} finished quantity is covered by material already transferred to WIP."
-            ).format(max_finishable)
-        )
 
     allocation_by_source = {}
     if is_final_finish:
