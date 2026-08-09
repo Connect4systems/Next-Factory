@@ -8,10 +8,38 @@ from c4factory.api.work_order_flow import (
     _get_source_warehouse_allocations,
     _recompute_wo_produced_qty,
 )
-from c4factory.api.work_order_pick_list import get_allocated_pick_list_qty
+from c4factory.api.work_order_pick_list import (
+    _get_pick_list_source_warehouse,
+    get_allocated_pick_list_qty,
+)
 
 
 class TestPickListProductionAllocation(FrappeTestCase):
+    def test_continuous_item_group_manufacture_warehouse_overrides_work_order_source(self):
+        work_order = frappe._dict(
+            {"company": "Test Company", "source_warehouse": "WO Warehouse"}
+        )
+        work_order_item = frappe._dict(
+            {
+                "item_code": "RM-CONT",
+                "item_group": "Continuous Materials",
+                "source_warehouse": "Old Warehouse",
+            }
+        )
+
+        with patch(
+            "c4factory.api.work_order_pick_list.get_source_warehouse_details",
+            return_value={
+                "warehouse": "Manufacture Warehouse",
+                "override_existing": True,
+            },
+        ):
+            warehouse = _get_pick_list_source_warehouse(
+                work_order, work_order_item
+            )
+
+        self.assertEqual(warehouse, "Manufacture Warehouse")
+
     def test_recomputes_work_order_produced_qty_from_submitted_finish_rows(self):
         status_calls = []
         work_order = frappe._dict(

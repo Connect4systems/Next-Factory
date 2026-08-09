@@ -4,7 +4,9 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
-from c4factory.c4_manufacturing.work_order_hooks import get_default_source_warehouse
+from c4factory.c4_manufacturing.work_order_hooks import (
+    get_source_warehouse_details,
+)
 
 
 def _resolve_work_order_arg(
@@ -225,14 +227,21 @@ def _get_pick_list_source_warehouse(wo, wo_item) -> str | None:
     if not item_group and item_code:
         item_group = frappe.db.get_value("Item", item_code, "item_group")
 
+    warehouse_details = get_source_warehouse_details(
+        item_code=item_code,
+        item_group=item_group,
+        company=wo.get("company"),
+    )
+    if warehouse_details.get("override_existing"):
+        # Continuous-production Item Groups must always use their configured
+        # Manufacture Warehouse, even if the Work Order row contains an older
+        # or manually populated source warehouse.
+        return warehouse_details.get("warehouse")
+
     return (
         wo_item.get("source_warehouse")
         or wo_item.get("from_warehouse")
-        or get_default_source_warehouse(
-            item_code=item_code,
-            item_group=item_group,
-            company=wo.get("company"),
-        )
+        or warehouse_details.get("warehouse")
         or wo.get("source_warehouse")
     )
 

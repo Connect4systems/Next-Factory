@@ -769,9 +769,16 @@ def make_partial_stock_entry_from_pick_list(pick_list: str, items_json: str) -> 
                 )
             )
 
+        source_warehouse = pl_row.warehouse
+        if continuous_production:
+            source_warehouse = get_default_source_warehouse(
+                item_code=pl_row.item_code,
+                company=pl.company,
+            ) or source_warehouse
+
         warehouse_allocations = _get_source_warehouse_allocations(
             item_code=pl_row.item_code,
-            warehouse=pl_row.warehouse,
+            warehouse=source_warehouse,
             company=pl.company,
             qty=qty,
         )
