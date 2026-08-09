@@ -418,7 +418,7 @@ async function start_continuous_material_transfer(frm) {
       frappe.show_alert(
         {
           message: __(
-            "No eligible required items were found. No Stock Entry or Pick List was created."
+            "No eligible required items were found. No Pick List was created."
           ),
           indicator: "orange"
         },
@@ -444,7 +444,7 @@ async function start_continuous_material_transfer(frm) {
     if (max_qty <= 0) {
       frappe.show_alert(
         {
-          message: __("No continuous-material quantity remains to transfer."),
+          message: __("No production quantity remains to allocate to Pick Lists."),
           indicator: "orange"
         },
         10
@@ -494,7 +494,7 @@ async function start_continuous_material_transfer(frm) {
         } catch (error) {
           frappe.show_alert(
             {
-              message: __("Unable to queue the background Stock Entry."),
+              message: __("Unable to queue draft Pick List creation."),
               indicator: "red"
             },
             10
@@ -507,7 +507,7 @@ async function start_continuous_material_transfer(frm) {
   } catch (error) {
     frappe.show_alert(
       {
-        message: __("Unable to start the background Stock Entry."),
+        message: __("Unable to start draft Pick List creation."),
         indicator: "red"
       },
       10
@@ -528,32 +528,14 @@ function register_continuous_start_listener() {
 
     let message = result.message;
     if (result.status === "success") {
-      let stock_entry_link = "";
-      let pick_list_link = "";
-      if (result.stock_entry) {
-        const route = `/app/stock-entry/${encodeURIComponent(
-          result.stock_entry
+      const pickListLinks = (result.pick_lists || []).map((pickList) => {
+        const route = `/app/pick-list/${encodeURIComponent(pickList)}`;
+        return `<a href="${route}"><b>${frappe.utils.escape_html(pickList)}</b></a>`;
+      });
+      if (pickListLinks.length) {
+        message = `${__("Draft Pick List(s)")} ${pickListLinks.join(", ")} ${__(
+          "were created successfully."
         )}`;
-        stock_entry_link = `${__("Stock Entry")} <a href="${route}"><b>${
-          result.stock_entry
-        }</b></a>`;
-      }
-      if (result.pick_list) {
-        const route = `/app/pick-list/${encodeURIComponent(result.pick_list)}`;
-        pick_list_link = `${__("Pick List")} <a href="${route}"><b>${
-          result.pick_list
-        }</b></a>`;
-      }
-      if (stock_entry_link && pick_list_link) {
-        message = `${stock_entry_link} ${__("was submitted and")} ${pick_list_link} ${__(
-          "was created successfully."
-        )}`;
-      } else if (stock_entry_link) {
-        message = `${stock_entry_link} ${__(
-          "was created and submitted successfully."
-        )}`;
-      } else if (pick_list_link) {
-        message = `${pick_list_link} ${__("was created successfully.")}`;
       }
     }
 

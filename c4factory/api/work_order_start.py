@@ -16,7 +16,7 @@ REALTIME_EVENT = "c4factory_continuous_start"
 
 @frappe.whitelist()
 def get_continuous_start_context(work_order: str) -> dict:
-    """Return the eligible Start channels and their shared maximum quantity."""
+    """Return the eligible Pick List channels and their shared maximum quantity."""
     wo = frappe.get_doc("Work Order", work_order)
     wo.check_permission("read")
 
@@ -36,7 +36,7 @@ def get_continuous_start_context(work_order: str) -> dict:
 
 @frappe.whitelist()
 def enqueue_continuous_start_transfer(work_order: str, qty: float) -> dict:
-    """Reserve and enqueue one idempotent continuous-material Start request."""
+    """Reserve and enqueue one idempotent paired-Pick-List Start request."""
     qty = flt(qty)
     if qty <= 0:
         frappe.throw(_("Start quantity must be greater than zero."))
@@ -50,15 +50,12 @@ def enqueue_continuous_start_transfer(work_order: str, qty: float) -> dict:
         return {
             "status": "no_items",
             "message": _(
-                "No eligible required items were found. No Stock Entry or Pick List was created."
+                "No eligible required items were found. No Pick List was created."
             ),
         }
-    if continuous_rows:
-        if not frappe.has_permission("Stock Entry", "create"):
-            frappe.throw(_("You do not have permission to create Stock Entries."))
-        if not frappe.has_permission("Stock Entry", "submit"):
-            frappe.throw(_("You do not have permission to submit Stock Entries."))
-    if pick_list_rows and not frappe.has_permission("Pick List", "create"):
+    if (continuous_rows or pick_list_rows) and not frappe.has_permission(
+        "Pick List", "create"
+    ):
         frappe.throw(_("You do not have permission to create Pick Lists."))
 
     # Serialize Start clicks for this Work Order. Reading the flag in the same
@@ -123,13 +120,7 @@ def enqueue_continuous_start_transfer(work_order: str, qty: float) -> dict:
     return {
         "status": "queued",
         "request_id": request_id,
-        "message": (
-            _("Stock Entry and Pick List creation started in the background.")
-            if continuous_rows and pick_list_rows
-            else _("Stock Entry creation started in the background.")
-            if continuous_rows
-            else _("Pick List creation started in the background.")
-        ),
+        "message": _("Draft Pick List creation started in the background."),
     }
 
 
@@ -139,37 +130,25 @@ def create_continuous_start_stock_entry(
     request_id: str,
     initiated_by: str,
 ) -> None:
-    """Background job: submit the continuous transfer and save the standard Pick List."""
+    """Background job: create draft Pick Lists for both production channels."""
     try:
-        existing_stock_entry = frappe.db.get_value(
-            "Stock Entry",
-            {
-                "custom_continuous_start_request_id": request_id,
-                "docstatus": 1,
-            },
-            "name",
-        )
-        existing_pick_list = frappe.db.get_value(
+        existing_pick_lists = frappe.get_all(
             "Pick List",
-            {
+            filters={
                 "custom_continuous_start_request_id": request_id,
                 "docstatus": ("<", 2),
             },
-            "name",
+            pluck="name",
         )
-        if existing_stock_entry or existing_pick_list:
+        if existing_pick_lists:
             _clear_pending_request(work_order, request_id)
             frappe.db.commit()
             _publish_result(
                 initiated_by,
                 work_order,
                 "success",
-                _get_success_message(
-                    existing_stock_entry,
-                    existing_pick_list,
-                ),
-                stock_entry=existing_stock_entry,
-                pick_list=existing_pick_list,
+                _get_success_message(existing_pick_lists),
+                pick_lists=existing_pick_lists,
             )
             return
 
@@ -184,8 +163,7 @@ def create_continuous_start_stock_entry(
                 wo.name,
                 "no_items",
                 _(
-                    "No eligible required items were found. "
-                    "No Stock Entry or Pick List was created."
+                    "No eligible required items were found. No Pick List was created."
                 ),
             )
             return
@@ -204,47 +182,49 @@ def create_continuous_start_stock_entry(
                 )
             )
 
-        pick_list = None
+        pick_lists = []
+        continuous_pick_list = None
+        non_continuous_pick_list = None
+        if continuous_rows:
+            pick_list_data = create_pick_list(
+                work_order=wo.name,
+                for_qty=qty,
+                continuous_production=1,
+                start_request_id=request_id,
+            )
+            continuous_pick_list = frappe.get_doc(pick_list_data)
+            continuous_pick_list.insert()
+            pick_lists.append(continuous_pick_list.name)
+
         if pick_list_rows:
             pick_list_data = create_pick_list(
                 work_order=wo.name,
                 for_qty=qty,
+                continuous_production=0,
+                start_request_id=request_id,
             )
-            pick_list = frappe.get_doc(pick_list_data)
-            pick_list.custom_continuous_start_request_id = request_id
-            pick_list.insert()
-
-        stock_entry = None
-        if continuous_rows:
-            stock_entry = _build_stock_entry(
-                wo,
-                continuous_rows,
-                qty,
-                request_id,
-            )
-            stock_entry.insert()
-            stock_entry.submit()
-            started_work_order = frappe.get_doc("Work Order", wo.name)
-            started_work_order.set_status()
+            non_continuous_pick_list = frappe.get_doc(pick_list_data)
+            non_continuous_pick_list.insert()
+            pick_lists.append(non_continuous_pick_list.name)
 
         _clear_pending_request(wo.name, request_id)
         frappe.db.commit()
-        stock_entry_name = stock_entry.name if stock_entry else None
-        pick_list_name = pick_list.name if pick_list else None
         _publish_result(
             initiated_by,
             wo.name,
             "success",
-            _get_success_message(
-                stock_entry_name,
-                pick_list_name,
+            _get_success_message(pick_lists),
+            pick_lists=pick_lists,
+            continuous_pick_list=(
+                continuous_pick_list.name if continuous_pick_list else None
             ),
-            stock_entry=stock_entry_name,
-            pick_list=pick_list_name,
+            non_continuous_pick_list=(
+                non_continuous_pick_list.name if non_continuous_pick_list else None
+            ),
         )
     except Exception as exc:
         error_message = cstr(exc) or _(
-            "Unable to create the Stock Entry and Pick List."
+            "Unable to create the draft Pick Lists."
         )
         traceback = frappe.get_traceback()
         frappe.db.rollback()
@@ -392,28 +372,33 @@ def _get_remaining_start_qty(
     has_continuous_items: bool,
     has_pick_list_items: bool,
 ) -> float:
-    remaining = []
-    if has_continuous_items:
-        remaining.append(
-            max(flt(wo.qty) - _get_continuous_transferred_qty(wo.name), 0.0)
-        )
-    if has_pick_list_items:
-        pick_list_remaining = get_remaining_pick_list_qty(wo)
-        pick_list_remaining -= _get_draft_start_pick_list_qty(wo.name)
-        remaining.append(max(pick_list_remaining, 0.0))
+    if not has_continuous_items and not has_pick_list_items:
+        return 0.0
 
-    return min(remaining) if remaining else 0.0
+    pick_list_remaining = get_remaining_pick_list_qty(wo)
+    pick_list_remaining -= _get_draft_start_pick_list_qty(wo.name)
+
+    # Preserve the allocation made by legacy Start requests that submitted a
+    # continuous Stock Entry before this paired-Pick-List workflow existed.
+    continuous_remaining = max(
+        flt(wo.qty) - _get_continuous_transferred_qty(wo.name), 0.0
+    )
+    return max(min(pick_list_remaining, continuous_remaining), 0.0)
 
 
 def _get_draft_start_pick_list_qty(work_order: str) -> float:
     return flt(
         frappe.db.sql(
             """
-            SELECT COALESCE(SUM(for_qty), 0)
-            FROM `tabPick List`
-            WHERE work_order = %s
-              AND docstatus = 0
-              AND COALESCE(custom_continuous_start_request_id, '') != ''
+            SELECT COALESCE(SUM(start_qty), 0)
+            FROM (
+                SELECT custom_continuous_start_request_id, MAX(for_qty) AS start_qty
+                FROM `tabPick List`
+                WHERE work_order = %s
+                  AND docstatus = 0
+                  AND COALESCE(custom_continuous_start_request_id, '') != ''
+                GROUP BY custom_continuous_start_request_id
+            ) draft_starts
             """,
             (work_order,),
         )[0][0]
@@ -479,19 +464,12 @@ def _get_latest_valuation_rate(
     return flt(rows[0].valuation_rate)
 
 
-def _get_success_message(
-    stock_entry: str | None,
-    pick_list: str | None,
-) -> str:
-    if stock_entry and pick_list:
-        return _(
-            "Stock Entry {0} was submitted and Pick List {1} was created successfully."
-        ).format(stock_entry, pick_list)
-    if stock_entry:
-        return _("Stock Entry {0} was created and submitted successfully.").format(
-            stock_entry
+def _get_success_message(pick_lists: list[str]) -> str:
+    if len(pick_lists) == 2:
+        return _("Draft Pick Lists {0} and {1} were created successfully.").format(
+            pick_lists[0], pick_lists[1]
         )
-    return _("Pick List {0} was created successfully.").format(pick_list)
+    return _("Draft Pick List {0} was created successfully.").format(pick_lists[0])
 
 
 def _get_continuous_transferred_qty(work_order: str) -> float:
@@ -554,8 +532,9 @@ def _publish_result(
     work_order: str,
     status: str,
     message: str,
-    stock_entry: str | None = None,
-    pick_list: str | None = None,
+    pick_lists: list[str] | None = None,
+    continuous_pick_list: str | None = None,
+    non_continuous_pick_list: str | None = None,
 ) -> None:
     try:
         frappe.publish_realtime(
@@ -564,8 +543,9 @@ def _publish_result(
                 "work_order": work_order,
                 "status": status,
                 "message": message,
-                "stock_entry": stock_entry,
-                "pick_list": pick_list,
+                "pick_lists": pick_lists or [],
+                "continuous_pick_list": continuous_pick_list,
+                "non_continuous_pick_list": non_continuous_pick_list,
             },
             user=user,
         )

@@ -11,15 +11,19 @@ frappe.ui.form.on("Pick List", {
     // نشتغل فقط لما تكون الوثيقة Submitted
     if (frm.doc.docstatus !== 1) return;
 
+    frm.add_custom_button(
+      __(
+        cint(frm.doc.custom_continuous_production)
+          ? "Transfer Partially"
+          : "Create Draft Stock Entry"
+      ),
+      () => open_partial_se_dialog(frm),
+      __("Factory")
+    );
+
     if (frm.doc.status !== "Completed") {
       frm.add_custom_button(
-        __("Create Partial Stock Entry"),
-        () => open_partial_se_dialog(frm),
-        __("Factory")
-      );
-
-      frm.add_custom_button(
-        __("Completed"),
+        __("Finish Pick List"),
         () => complete_pick_list(frm),
         __("Factory")
       );
@@ -103,7 +107,7 @@ async function is_work_order_operation_disabled(work_order) {
 function complete_pick_list(frm) {
   frappe.confirm(
     __(
-      "Complete this Pick List and waive all remaining balances? You will not be able to create another partial Stock Entry from this Pick List."
+      "Finish this Pick List operationally? Remaining balances will stay available for later material transfers while the Work Order is still open."
     ),
     async () => {
       try {
@@ -117,7 +121,7 @@ function complete_pick_list(frm) {
         });
 
         frappe.show_alert({
-          message: __("Pick List completed. Remaining balances were waived."),
+          message: __("Pick List finished. Remaining balances are still transferable."),
           indicator: "green",
         });
         await frm.reload_doc();
@@ -181,9 +185,17 @@ async function open_partial_se_dialog(frm) {
     }
 
     const d = new frappe.ui.Dialog({
-      title: __("Create Partial Stock Entry"),
+      title: __(
+        cint(frm.doc.custom_continuous_production)
+          ? "Submit Partial Material Transfer"
+          : "Create Draft Material Transfer"
+      ),
       size: "large",
-      primary_action_label: __("Create Stock Entry"),
+      primary_action_label: __(
+        cint(frm.doc.custom_continuous_production)
+          ? "Transfer and Submit"
+          : "Create Draft Stock Entry"
+      ),
       primary_action: () => submit_partial_se(frm, d, rows),
     });
 
@@ -301,6 +313,12 @@ async function submit_partial_se(frm, dialog, rows) {
     }
 
     dialog.hide();
+    if (cint(frm.doc.custom_continuous_production)) {
+      frappe.show_alert({
+        message: __("Stock Entry {0} was submitted successfully.", [message]),
+        indicator: "green",
+      });
+    }
     frappe.set_route("Form", "Stock Entry", message);
   } catch (e) {
     console.error(e);

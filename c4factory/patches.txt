@@ -14,6 +14,7 @@ c4factory.patches.v1_0.setup_work_order_additional_material_table
 c4factory.patches.v1_0.setup_continuous_start_transfer
 c4factory.patches.v1_0.setup_continuous_start_pick_list_field
 c4factory.patches.v1_0.setup_continuous_start_qty_field
+c4factory.patches.v1_0.setup_paired_production_pick_lists
 c4factory.patches.v1_0.setup_work_order_mold_flow
 c4factory.patches.v1_0.setup_finish_material_allocation
 c4factory.patches.v1_0.move_mold_cost_account_to_manufacturing_settings

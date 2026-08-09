@@ -32,24 +32,53 @@ def get_remaining_pick_list_qty(wo, exclude_pick_list: str | None = None) -> flo
     Open and Completed Pick Lists are both submitted documents and reserve their
     production quantity. Cancelled and draft Pick Lists do not reserve quantity.
     """
-    allocated_qty = flt(
-        frappe.db.sql(
-            """
-            SELECT COALESCE(SUM(for_qty), 0)
-            FROM `tabPick List`
-            WHERE work_order = %(work_order)s
-              AND docstatus = 1
-              AND name != %(exclude_pick_list)s
-            """,
-            {
-                "work_order": wo.name,
-                "exclude_pick_list": exclude_pick_list or "",
-            },
-        )[0][0]
+    allocated_qty = get_allocated_pick_list_qty(
+        wo.name,
+        docstatus=1,
+        exclude_pick_list=exclude_pick_list,
     )
 
     already_covered = max(allocated_qty, flt(wo.produced_qty))
     return max(flt(wo.qty) - already_covered, 0.0)
+
+
+def get_allocated_pick_list_qty(
+    work_order: str,
+    docstatus: int,
+    exclude_pick_list: str | None = None,
+) -> float:
+    """Return production quantity reserved by Pick Lists without double-counting a Start pair."""
+    fields = ["name", "for_qty"]
+    meta = frappe.get_meta("Pick List")
+    has_request_id = meta.has_field("custom_continuous_start_request_id")
+    if has_request_id:
+        fields.append("custom_continuous_start_request_id")
+
+    rows = frappe.get_all(
+        "Pick List",
+        filters={"work_order": work_order, "docstatus": docstatus},
+        fields=fields,
+    )
+    excluded_request = None
+    if exclude_pick_list and has_request_id:
+        excluded_request = frappe.db.get_value(
+            "Pick List",
+            exclude_pick_list,
+            "custom_continuous_start_request_id",
+        )
+
+    allocations = {}
+    for row in rows:
+        request_id = row.get("custom_continuous_start_request_id") if has_request_id else None
+        if row.name == exclude_pick_list or (excluded_request and request_id == excluded_request):
+            continue
+
+        # The continuous and non-continuous Pick Lists created by one Start
+        # request represent the same finished-goods quantity.
+        key = f"start:{request_id}" if request_id else f"pick-list:{row.name}"
+        allocations[key] = max(flt(allocations.get(key)), flt(row.get("for_qty")))
+
+    return sum(allocations.values())
 
 
 @frappe.whitelist()
@@ -57,6 +86,8 @@ def create_pick_list(
     work_order: str | None = None,
     source_name: str | None = None,
     for_qty: float | None = None,
+    continuous_production: int | bool = 0,
+    start_request_id: str | None = None,
     **kwargs,
 ):
     """
@@ -100,10 +131,15 @@ def create_pick_list(
 
     qty_scale = fg_qty / (flt(wo.qty) or 1.0)
 
+    continuous_production = bool(cint(continuous_production))
     pl = frappe.new_doc("Pick List")
     pl.company = wo.company
     pl.purpose = "Material Transfer for Manufacture"
     pl.work_order = wo.name
+    if pl.meta.has_field("custom_continuous_production"):
+        pl.custom_continuous_production = 1 if continuous_production else 0
+    if start_request_id and pl.meta.has_field("custom_continuous_start_request_id"):
+        pl.custom_continuous_start_request_id = start_request_id
     if hasattr(pl, "pick_manually"):
         # Preserve every required row even when no stock is currently available.
         pl.pick_manually = 1
@@ -124,11 +160,12 @@ def create_pick_list(
         if not item_code:
             continue
 
-        if is_continuous_manufacture_item(
+        row_is_continuous = is_continuous_manufacture_item(
             wo_item,
             item_group_cache=item_group_cache,
             continuous_group_cache=continuous_group_cache,
-        ):
+        )
+        if row_is_continuous != continuous_production:
             continue
 
         required_qty = flt(wo_item.get("required_qty") or wo_item.get("qty"))

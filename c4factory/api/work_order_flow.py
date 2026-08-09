@@ -184,13 +184,6 @@ def _get_pick_list_balances_map(pl_doc_or_name):
     for info in result.values():
         info["balance"] = max(flt(info["pl_qty"]) - flt(info["transferred"]), 0.0)
 
-    # A manually completed Pick List intentionally waives any quantity that was
-    # not transferred. Keep the planned and transferred quantities intact for
-    # audit/reporting, but expose no actionable balance.
-    if flt(pl.get("custom_manually_completed")):
-        for info in result.values():
-            info["balance"] = 0.0
-
     return result
 
 
@@ -272,11 +265,10 @@ def get_pick_list_balance_rows(pick_list: str):
 @frappe.whitelist()
 def complete_pick_list(pick_list: str) -> dict:
     """
-    Manually complete a submitted Pick List and waive its remaining balance.
+    Operationally finish a submitted Pick List without waiving its remaining balance.
 
     Actual Stock Entry quantities are not changed. This only closes the
-    untransferred remainder so manufacturing can continue with the material
-    that was actually transferred to WIP.
+    untransferred remainder remains available for later partial transfers.
     """
     if not pick_list:
         frappe.throw(_("Pick List is required"))
@@ -462,6 +454,7 @@ def sync_pick_list_items_from_work_order(doc) -> None:
     qty_scale = pick_qty / (flt(wo.qty) or 1.0)
 
     expected = {}
+    continuous_production = bool(flt(doc.get("custom_continuous_production")))
     item_group_cache = {}
     continuous_group_cache = {}
     for wo_row in _get_wo_items(wo):
@@ -471,11 +464,12 @@ def sync_pick_list_items_from_work_order(doc) -> None:
         if not item_code or row_qty <= 0:
             continue
 
-        if is_continuous_manufacture_item(
+        row_is_continuous = is_continuous_manufacture_item(
             wo_row,
             item_group_cache=item_group_cache,
             continuous_group_cache=continuous_group_cache,
-        ):
+        )
+        if row_is_continuous != continuous_production:
             continue
 
         stock_uom = (
@@ -547,7 +541,7 @@ def validate_pick_list_matches_work_order(doc) -> None:
 
     Availability is deliberately not considered: zero-stock materials remain
     on the Pick List so shortages stay visible and can be transferred later.
-    Continuous-manufacture Item Group materials are deliberately excluded.
+    The Continuous Production flag selects the matching Work Order material channel.
     """
     work_order = doc.get("work_order")
     if not work_order:
@@ -570,6 +564,7 @@ def validate_pick_list_matches_work_order(doc) -> None:
     from c4factory.api.work_order_pick_list import is_continuous_manufacture_item
 
     expected = {}
+    continuous_production = bool(flt(doc.get("custom_continuous_production")))
     item_group_cache = {}
     continuous_group_cache = {}
     for wo_row in wo_rows:
@@ -579,11 +574,12 @@ def validate_pick_list_matches_work_order(doc) -> None:
         if not item_code or row_qty <= 0:
             continue
 
-        if is_continuous_manufacture_item(
+        row_is_continuous = is_continuous_manufacture_item(
             wo_row,
             item_group_cache=item_group_cache,
             continuous_group_cache=continuous_group_cache,
-        ):
+        )
+        if row_is_continuous != continuous_production:
             continue
 
         expected[wo_row.name] = {
@@ -699,6 +695,7 @@ def make_partial_stock_entry_from_pick_list(pick_list: str, items_json: str) -> 
         frappe.throw(_("Pick List is required"))
 
     pl = frappe.get_doc("Pick List", pick_list)
+    pl.check_permission("read")
     if pl.docstatus != 1:
         frappe.throw(_("Pick List {0} must be submitted").format(pl.name))
 
@@ -707,9 +704,26 @@ def make_partial_stock_entry_from_pick_list(pick_list: str, items_json: str) -> 
         frappe.throw(_("Pick List {0} is not linked to a Work Order").format(pl.name))
 
     wo = frappe.get_doc("Work Order", wo_name)
+    if wo.docstatus != 1 or wo.get("status") in {
+        "Stopped",
+        "Closed",
+        "Completed",
+        "Cancelled",
+    }:
+        frappe.throw(
+            _("Material cannot be transferred while Work Order status is {0}.").format(
+                wo.get("status")
+            )
+        )
 
     if not wo.get("wip_warehouse"):
         frappe.throw(_("Work Order {0} has no WIP Warehouse set").format(wo.name))
+
+    continuous_production = bool(flt(pl.get("custom_continuous_production")))
+    if not frappe.has_permission("Stock Entry", "create"):
+        frappe.throw(_("You do not have permission to create Stock Entries."))
+    if continuous_production and not frappe.has_permission("Stock Entry", "submit"):
+        frappe.throw(_("You do not have permission to submit Stock Entries."))
 
     # Parse items from dialog
     items = frappe.parse_json(items_json) or []
@@ -780,6 +794,8 @@ def make_partial_stock_entry_from_pick_list(pick_list: str, items_json: str) -> 
         frappe.throw(_("No valid items to transfer for Work Order {0}").format(wo.name))
 
     se.insert(ignore_permissions=True)
+    if continuous_production:
+        se.submit()
     frappe.db.commit()
 
     return se.name
@@ -907,10 +923,10 @@ def _get_transferred_production_qty_from_stock_entries(wo_name: str) -> float:
     Example: a Pick List is for 2 finished units, but only half of every row was
     moved by submitted Stock Entries. This returns 1, not the full PL for_qty.
 
-    A manually Completed Pick List intentionally waives its remaining material
-    balance, so it credits its full for_qty and allows the Work Order to finish.
-    When both material channels exist, the lower covered production quantity is
-    authoritative so the same finished quantity is not counted twice.
+    Manually finishing a Pick List does not waive its remaining material, so
+    only submitted Stock Entries contribute coverage. The two Pick Lists from
+    one Start request form one allocation and the lower covered channel is
+    authoritative when both channels exist.
     """
     rows = frappe.db.sql(
         """
@@ -943,33 +959,45 @@ def _get_transferred_production_qty_from_stock_entries(wo_name: str) -> float:
         by_pick_list.setdefault(row.pick_list, []).append(row)
 
     pl_meta = frappe.get_meta("Pick List")
-    pl_fields = ["name", "for_qty"]
-    has_manual_completion = pl_meta.has_field("custom_manually_completed")
-    if has_manual_completion:
-        pl_fields.append("custom_manually_completed")
+    pl_fields = ["name", "for_qty", "docstatus"]
+    has_request_id = pl_meta.has_field("custom_continuous_start_request_id")
+    has_continuous_flag = pl_meta.has_field("custom_continuous_production")
+    if has_request_id:
+        pl_fields.append("custom_continuous_start_request_id")
+    if has_continuous_flag:
+        pl_fields.append("custom_continuous_production")
 
-    submitted_pick_lists = frappe.get_all(
+    all_pick_lists = frappe.get_all(
         "Pick List",
         filters={
             "work_order": wo_name,
-            "docstatus": 1,
+            "docstatus": ("<", 2),
         },
         fields=pl_fields,
     )
 
-    pick_list_total = 0.0
-    for pick_list in submitted_pick_lists:
+    pick_list_coverage = {}
+    for pick_list in all_pick_lists:
+        request_id = pick_list.get("custom_continuous_start_request_id")
+        if request_id:
+            channel = (
+                "continuous"
+                if flt(pick_list.get("custom_continuous_production"))
+                else "non_continuous"
+            )
+            pick_list_coverage.setdefault(f"start:{request_id}", {}).setdefault(
+                channel, 0.0
+            )
+        else:
+            pick_list_coverage.setdefault(f"pick-list:{pick_list.name}", {"single": 0.0})
+
+        if pick_list.docstatus != 1:
+            continue
+
         pl_name = pick_list.name
         try:
             pl = frappe.get_doc("Pick List", pl_name)
             pl_for_qty = _get_pick_list_finished_goods_qty(pl)
-
-            if has_manual_completion and flt(
-                pick_list.get("custom_manually_completed")
-            ):
-                pick_list_total += pl_for_qty
-                continue
-
             transfer_rows = by_pick_list.get(pl_name) or []
             if not transfer_rows:
                 continue
@@ -977,7 +1005,14 @@ def _get_transferred_production_qty_from_stock_entries(wo_name: str) -> float:
             if not row_ratios:
                 continue
 
-            pick_list_total += min(row_ratios) * pl_for_qty
+            covered_qty = min(row_ratios) * pl_for_qty
+            if request_id:
+                key = f"start:{request_id}"
+                pick_list_coverage[key][channel] = max(
+                    flt(pick_list_coverage[key].get(channel)), covered_qty
+                )
+            else:
+                pick_list_coverage[f"pick-list:{pl_name}"]["single"] = covered_qty
             _update_pick_list_status_from_db(pl_name)
         except Exception:
             frappe.log_error(
@@ -985,40 +1020,36 @@ def _get_transferred_production_qty_from_stock_entries(wo_name: str) -> float:
                 f"C4Factory: transferred production qty failed ({pl_name})",
             )
 
-    from c4factory.api.work_order_pick_list import is_continuous_manufacture_item
-    from c4factory.api.work_order_start import _get_continuous_transferred_qty
+    # Keep pre-migration Start requests correct. Those requests submitted the
+    # continuous channel directly and created only the non-continuous Pick List.
+    legacy_continuous_rows = frappe.db.sql(
+        """
+        SELECT custom_continuous_start_request_id AS request_id,
+               COALESCE(SUM(custom_continuous_start_qty), 0) AS covered_qty
+        FROM `tabStock Entry`
+        WHERE work_order = %(wo)s
+          AND docstatus = 1
+          AND COALESCE(custom_continuous_manufacture_transfer, 0) = 1
+          AND COALESCE(custom_continuous_start_request_id, '') != ''
+          AND (stock_entry_type = 'Material Transfer for Manufacture'
+               OR purpose = 'Material Transfer for Manufacture')
+        GROUP BY custom_continuous_start_request_id
+        """,
+        {"wo": wo_name},
+        as_dict=True,
+    )
+    for row in legacy_continuous_rows:
+        key = f"start:{row.request_id}"
+        pick_list_coverage.setdefault(key, {})["continuous"] = flt(row.covered_qty)
+
+    total = 0.0
+    for channels in pick_list_coverage.values():
+        if "continuous" in channels and "non_continuous" in channels:
+            total += min(channels["continuous"], channels["non_continuous"])
+        else:
+            total += max(channels.values(), default=0.0)
 
     wo = frappe.get_doc("Work Order", wo_name)
-    item_group_cache = {}
-    continuous_group_cache = {}
-    has_continuous_items = False
-    has_pick_list_items = False
-    for wo_row in _get_wo_items(wo):
-        if not wo_row.get("item_code") or flt(
-            wo_row.get("required_qty") or wo_row.get("qty")
-        ) <= 0:
-            continue
-
-        if is_continuous_manufacture_item(
-            wo_row,
-            item_group_cache=item_group_cache,
-            continuous_group_cache=continuous_group_cache,
-        ):
-            has_continuous_items = True
-        else:
-            has_pick_list_items = True
-
-    continuous_total = _get_continuous_transferred_qty(wo_name)
-    if has_continuous_items and has_pick_list_items:
-        # A production quantity is fully transferred only after both material
-        # channels cover it. Status is handled separately as soon as either
-        # continuous transfer is submitted.
-        total = min(pick_list_total, continuous_total)
-    elif has_continuous_items:
-        total = continuous_total
-    else:
-        total = pick_list_total
-
     wo_qty = flt(wo.qty)
     return min(total, wo_qty) if wo_qty > 0 else total
 
