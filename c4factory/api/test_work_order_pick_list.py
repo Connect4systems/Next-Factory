@@ -6,11 +6,44 @@ from frappe.tests.utils import FrappeTestCase
 from c4factory.api.work_order_flow import (
     _get_pick_list_balances_map,
     _get_source_warehouse_allocations,
+    _recompute_wo_produced_qty,
 )
 from c4factory.api.work_order_pick_list import get_allocated_pick_list_qty
 
 
 class TestPickListProductionAllocation(FrappeTestCase):
+    def test_recomputes_work_order_produced_qty_from_submitted_finish_rows(self):
+        status_calls = []
+        work_order = frappe._dict(
+            {
+                "name": "WO-1",
+                "produced_qty": 0,
+                "set_status": lambda: status_calls.append(True),
+            }
+        )
+
+        with (
+            patch(
+                "c4factory.api.work_order_flow.frappe.db.sql",
+                return_value=[[5]],
+            ),
+            patch(
+                "c4factory.api.work_order_flow.frappe.db.set_value"
+            ) as set_value,
+            patch(
+                "c4factory.api.work_order_flow.frappe.get_doc",
+                return_value=work_order,
+            ),
+        ):
+            produced_qty = _recompute_wo_produced_qty("WO-1")
+
+        self.assertEqual(produced_qty, 5)
+        self.assertEqual(work_order.produced_qty, 5)
+        self.assertEqual(status_calls, [True])
+        set_value.assert_called_once_with(
+            "Work Order", "WO-1", "produced_qty", 5, update_modified=False
+        )
+
     def test_group_warehouse_is_split_across_leaf_warehouses(self):
         warehouse = frappe._dict(
             {"is_group": 1, "lft": 10, "rgt": 20, "company": "Test Company"}

@@ -931,6 +931,7 @@ def on_stock_entry_submit(doc, method=None):
     if wo_name:
         try:
             _recompute_wo_material_transfer_from_pls(wo_name)
+            _recompute_wo_produced_qty(wo_name)
         except Exception:
             frappe.log_error(
                 frappe.get_traceback(), "C4Factory: on_stock_entry_submit (WO)"
@@ -983,11 +984,49 @@ def _recompute_wo_material_transfer_from_pls(wo_name: str):
 def sync_work_order_material_transfer(wo_name: str) -> float:
     """Manually refresh material_transferred_for_manufacturing for one WO."""
     _recompute_wo_material_transfer_from_pls(wo_name)
+    _recompute_wo_produced_qty(wo_name)
     return flt(
         frappe.db.get_value(
             "Work Order", wo_name, "material_transferred_for_manufacturing"
         )
     )
+
+
+def _recompute_wo_produced_qty(wo_name: str) -> float:
+    """Synchronize Work Order produced_qty from submitted Manufacture finished rows."""
+    if not wo_name:
+        return 0.0
+
+    produced_qty = flt(
+        frappe.db.sql(
+            """
+            SELECT COALESCE(SUM(ABS(CASE
+                       WHEN COALESCE(sed.transfer_qty, 0) != 0
+                       THEN sed.transfer_qty ELSE sed.qty
+                   END)), 0)
+            FROM `tabStock Entry Detail` sed
+            INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.work_order = %(work_order)s
+              AND se.docstatus = 1
+              AND (se.stock_entry_type = 'Manufacture'
+                   OR se.purpose = 'Manufacture')
+              AND COALESCE(sed.is_finished_item, 0) = 1
+              AND COALESCE(sed.is_scrap_item, 0) = 0
+            """,
+            {"work_order": wo_name},
+        )[0][0]
+    )
+    frappe.db.set_value(
+        "Work Order",
+        wo_name,
+        "produced_qty",
+        produced_qty,
+        update_modified=False,
+    )
+    wo = frappe.get_doc("Work Order", wo_name)
+    wo.produced_qty = produced_qty
+    _update_wo_status(wo)
+    return produced_qty
 
 
 @frappe.whitelist()
@@ -1286,6 +1325,7 @@ def _recompute_links_for_stock_entry_doc(doc) -> None:
     for wo in work_orders:
         try:
             _recompute_wo_material_transfer_from_pls(wo)
+            _recompute_wo_produced_qty(wo)
             recompute_work_order_costing(wo)
         except Exception:
             frappe.log_error(
@@ -1409,6 +1449,7 @@ def recompute_after_stock_entry_links(pick_lists=None, work_orders=None):
             continue
         try:
             _recompute_wo_material_transfer_from_pls(wo)
+            _recompute_wo_produced_qty(wo)
             recompute_work_order_costing(wo)
         except Exception:
             frappe.log_error(
