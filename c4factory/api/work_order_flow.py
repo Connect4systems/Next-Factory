@@ -1004,9 +1004,20 @@ def get_work_order_material_progress(wo_name: str) -> dict:
     if not required_rows:
         return {"percent": 0, "transferred_items": 0, "total_items": 0}
 
+    sed_meta = frappe.get_meta("Stock Entry Detail")
+    work_order_item_select = (
+        "sed.custom_work_order_item"
+        if sed_meta.has_field("custom_work_order_item")
+        else "NULL"
+    )
+    work_order_item_group = (
+        "sed.custom_work_order_item, "
+        if sed_meta.has_field("custom_work_order_item")
+        else ""
+    )
     transferred_rows = frappe.db.sql(
-        """
-        SELECT sed.custom_work_order_item,
+        f"""
+        SELECT {work_order_item_select} AS custom_work_order_item,
                sed.item_code,
                COALESCE(SUM(ABS(sed.qty)), 0) AS transferred_qty
         FROM `tabStock Entry Detail` sed
@@ -1018,7 +1029,7 @@ def get_work_order_material_progress(wo_name: str) -> dict:
                OR se.purpose = 'Material Transfer for Manufacture')
           AND COALESCE(sed.is_finished_item, 0) = 0
           AND COALESCE(sed.is_scrap_item, 0) = 0
-        GROUP BY sed.custom_work_order_item, sed.item_code
+        GROUP BY {work_order_item_group}sed.item_code
         """,
         {"work_order": wo.name},
         as_dict=True,
