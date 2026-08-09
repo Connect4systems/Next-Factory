@@ -194,11 +194,22 @@ def validate_finish_material_allocation(doc, method: str | None = None) -> None:
         source_detail = row.get("custom_source_transfer_detail")
         if not source_detail or source_detail not in expected:
             frappe.throw(_("Every Finish raw-material row must reference its source transfer row."))
+        if source_detail in actual:
+            frappe.throw(
+                _("Source transfer row {0} cannot appear more than once.").format(
+                    frappe.bold(source_detail)
+                )
+            )
         if row.item_code != expected[source_detail]["item_code"]:
             frappe.throw(_("Finish item must match source transfer item {0}.").format(source_detail))
-        row_qty = abs(
-            flt(row.get("transfer_qty")) or flt(row.get("qty"))
-        )
+        # ERPNext/client precision and conversion calculations can normalize a
+        # generated row before its first save. These rows are controlled by the
+        # source allocation, so restore the authoritative quantity instead of
+        # rejecting the generated draft.
+        row_qty = flt(expected[source_detail]["qty"])
+        row.qty = row_qty
+        if row.meta.has_field("transfer_qty"):
+            row.transfer_qty = row_qty
         expected_rate = flt(
             expected[source_detail].get("valuation_rate")
             or expected[source_detail].get("basic_rate")
@@ -209,7 +220,7 @@ def validate_finish_material_allocation(doc, method: str | None = None) -> None:
         row.basic_amount = row.amount
         if row.meta.has_field("set_basic_rate_manually"):
             row.set_basic_rate_manually = 1
-        actual[source_detail] = flt(actual.get(source_detail)) + row_qty
+        actual[source_detail] = row_qty
 
     for source_detail, expected_row in expected.items():
         if abs(flt(actual.get(source_detail)) - flt(expected_row["qty"])) > 0.000001:
