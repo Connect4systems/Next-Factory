@@ -7,6 +7,30 @@ from c4factory.overrides.work_order import WorkOrder
 
 
 class TestWorkOrderRequiredQuantities(FrappeTestCase):
+  def test_submitted_partial_material_transfer_starts_work_order(self):
+    work_order = frappe._dict(
+      {
+        "name": "WO-TEST",
+        "docstatus": 1,
+        "status": "Not Started",
+        "qty": 20,
+        "produced_qty": 0,
+        "material_transferred_for_manufacturing": 0,
+        "operations": [],
+      }
+    )
+
+    with (
+      patch("c4factory.overrides.work_order.frappe.db.exists", return_value=True),
+      patch("c4factory.overrides.work_order.frappe.db.set_value") as set_value,
+    ):
+      WorkOrder.set_status(work_order)
+
+    self.assertEqual(work_order.status, "In Process")
+    set_value.assert_called_once_with(
+      "Work Order", "WO-TEST", "status", "In Process", update_modified=False
+    )
+
   def test_normalizes_exploded_bom_quantities_once(self):
     work_order = frappe._dict(
       {

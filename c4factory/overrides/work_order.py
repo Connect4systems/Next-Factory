@@ -145,13 +145,21 @@ class WorkOrder(ERPNextWorkOrder):
         qty = flt(getattr(self, "qty", 0))
         produced = flt(getattr(self, "produced_qty", 0))
         transferred = flt(getattr(self, "material_transferred_for_manufacturing", 0))
-        continuous_transfer_started = bool(
+        material_transfer_started = bool(
           frappe.db.exists(
             "Stock Entry",
             {
               "work_order": self.name,
               "docstatus": 1,
-              "custom_continuous_manufacture_transfer": 1,
+              "stock_entry_type": "Material Transfer for Manufacture",
+            },
+          )
+          or frappe.db.exists(
+            "Stock Entry",
+            {
+              "work_order": self.name,
+              "docstatus": 1,
+              "purpose": "Material Transfer for Manufacture",
             },
           )
         )
@@ -165,7 +173,7 @@ class WorkOrder(ERPNextWorkOrder):
 
         if qty and produced >= qty:
           new_status = "Completed"
-        elif transferred > 0 or produced > 0 or in_process or continuous_transfer_started:
+        elif transferred > 0 or produced > 0 or in_process or material_transfer_started:
           new_status = "In Process"
         else:
           # When submitted but nothing started

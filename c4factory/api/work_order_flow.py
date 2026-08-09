@@ -769,26 +769,33 @@ def make_partial_stock_entry_from_pick_list(pick_list: str, items_json: str) -> 
                 )
             )
 
-        item = se.append("items", {})
-        item.item_code = pl_row.item_code
-        item.item_name = pl_row.item_name
-        item.uom = pl_row.uom
-        item.qty = qty
+        warehouse_allocations = _get_source_warehouse_allocations(
+            item_code=pl_row.item_code,
+            warehouse=pl_row.warehouse,
+            company=pl.company,
+            qty=qty,
+        )
+        for source_warehouse, allocated_qty in warehouse_allocations:
+            item = se.append("items", {})
+            item.item_code = pl_row.item_code
+            item.item_name = pl_row.item_name
+            item.uom = pl_row.uom
+            item.qty = allocated_qty
 
-        # From Pick List warehouse to Work Order WIP warehouse
-        item.s_warehouse = pl_row.warehouse
-        item.t_warehouse = wo.wip_warehouse
+            # A configured group warehouse is expanded to leaf warehouses.
+            item.s_warehouse = source_warehouse
+            item.t_warehouse = wo.wip_warehouse
 
-        # Optional link to PL item if custom field exists
-        # (custom_pick_list_item on Stock Entry Detail)
-        try:
-            item.custom_pick_list_item = pl_row.name
-        except Exception:
-            pass
-        try:
-            item.custom_work_order_item = pl_row.get("custom_work_order_item")
-        except Exception:
-            pass
+            # Multiple leaf rows may reference the same Pick List item. Balance
+            # calculations deliberately sum those submitted Stock Entry rows.
+            try:
+                item.custom_pick_list_item = pl_row.name
+            except Exception:
+                pass
+            try:
+                item.custom_work_order_item = pl_row.get("custom_work_order_item")
+            except Exception:
+                pass
 
     if not se.get("items"):
         frappe.throw(_("No valid items to transfer for Work Order {0}").format(wo.name))
@@ -799,6 +806,73 @@ def make_partial_stock_entry_from_pick_list(pick_list: str, items_json: str) -> 
     frappe.db.commit()
 
     return se.name
+
+
+def _get_source_warehouse_allocations(
+    item_code: str,
+    warehouse: str,
+    company: str,
+    qty: float,
+) -> list[tuple[str, float]]:
+    """Expand a configured group warehouse into stock-bearing leaf warehouses."""
+    details = frappe.db.get_value(
+        "Warehouse",
+        warehouse,
+        ["is_group", "lft", "rgt", "company"],
+        as_dict=True,
+    )
+    if not details or not flt(details.get("is_group")):
+        return [(warehouse, qty)]
+
+    leaf_rows = frappe.db.sql(
+        """
+        SELECT w.name,
+               GREATEST(COALESCE(bin.actual_qty, 0), 0) AS available_qty
+        FROM `tabWarehouse` w
+        LEFT JOIN `tabBin` bin
+          ON bin.warehouse = w.name
+         AND bin.item_code = %(item_code)s
+        WHERE w.lft > %(lft)s
+          AND w.rgt < %(rgt)s
+          AND COALESCE(w.is_group, 0) = 0
+          AND COALESCE(w.disabled, 0) = 0
+          AND (%(company)s = '' OR w.company = %(company)s)
+        ORDER BY available_qty DESC, w.lft ASC
+        """,
+        {
+            "item_code": item_code,
+            "lft": details.lft,
+            "rgt": details.rgt,
+            "company": company or details.get("company") or "",
+        },
+        as_dict=True,
+    )
+    available_total = sum(flt(row.available_qty) for row in leaf_rows)
+    if not leaf_rows or available_total + 0.000001 < qty:
+        frappe.throw(
+            _(
+                "Item {0}: group warehouse {1} has only {2} available across "
+                "its leaf warehouses, but transfer quantity is {3}."
+            ).format(
+                frappe.bold(item_code),
+                frappe.bold(warehouse),
+                available_total,
+                qty,
+            )
+        )
+
+    allocations = []
+    remaining = qty
+    for row in leaf_rows:
+        allocated_qty = min(remaining, flt(row.available_qty))
+        if allocated_qty <= 0:
+            continue
+        allocations.append((row.name, allocated_qty))
+        remaining -= allocated_qty
+        if remaining <= 0.000001:
+            break
+
+    return allocations
 
 
 @frappe.whitelist()

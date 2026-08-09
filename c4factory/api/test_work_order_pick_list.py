@@ -3,11 +3,39 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from c4factory.api.work_order_flow import _get_pick_list_balances_map
+from c4factory.api.work_order_flow import (
+    _get_pick_list_balances_map,
+    _get_source_warehouse_allocations,
+)
 from c4factory.api.work_order_pick_list import get_allocated_pick_list_qty
 
 
 class TestPickListProductionAllocation(FrappeTestCase):
+    def test_group_warehouse_is_split_across_leaf_warehouses(self):
+        warehouse = frappe._dict(
+            {"is_group": 1, "lft": 10, "rgt": 20, "company": "Test Company"}
+        )
+        leaf_rows = [
+            frappe._dict({"name": "Leaf A", "available_qty": 6}),
+            frappe._dict({"name": "Leaf B", "available_qty": 5}),
+        ]
+
+        with (
+            patch(
+                "c4factory.api.work_order_flow.frappe.db.get_value",
+                return_value=warehouse,
+            ),
+            patch(
+                "c4factory.api.work_order_flow.frappe.db.sql",
+                return_value=leaf_rows,
+            ),
+        ):
+            allocations = _get_source_warehouse_allocations(
+                "RM-1", "Warehouse Group", "Test Company", 9
+            )
+
+        self.assertEqual(allocations, [("Leaf A", 6), ("Leaf B", 3)])
+
     def test_manually_finished_pick_list_keeps_transferable_balance(self):
         pick_list = frappe._dict(
             {

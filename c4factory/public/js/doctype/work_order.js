@@ -256,10 +256,18 @@ async function refresh_material_transferred_qty(frm) {
       args: { wo_name: frm.doc.name },
     });
     const transferred = flt(message);
+    const { message: statusValues } = await frappe.db.get_value(
+      "Work Order",
+      frm.doc.name,
+      "status"
+    );
+    const statusChanged =
+      statusValues?.status && statusValues.status !== frm.doc.status;
     if (
       Math.abs(
         transferred - flt(frm.doc.material_transferred_for_manufacturing)
-      ) > 0.000001
+      ) > 0.000001 ||
+      statusChanged
     ) {
       frm.doc.material_transferred_for_manufacturing = transferred;
       frm.refresh_field("material_transferred_for_manufacturing");
