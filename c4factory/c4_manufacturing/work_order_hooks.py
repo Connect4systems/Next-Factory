@@ -363,9 +363,13 @@ def _get_default_warehouse_from_item_group_defaults(group, company: str | None =
             if not row.get("company") and warehouse:
                 return warehouse
 
-        for row in defaults:
-            warehouse = row.get("default_warehouse") or row.get("warehouse")
-            if warehouse:
-                return warehouse
+        # Without a company there is no basis for choosing between multiple
+        # company-specific rows. When a company was supplied, never leak a
+        # warehouse belonging to another company into the transaction.
+        if not company:
+            for row in defaults:
+                warehouse = row.get("default_warehouse") or row.get("warehouse")
+                if warehouse:
+                    return warehouse
 
     return direct_warehouse

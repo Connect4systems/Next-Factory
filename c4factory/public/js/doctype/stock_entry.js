@@ -1,4 +1,8 @@
 frappe.ui.form.on("Stock Entry", {
+  company(frm) {
+    set_stock_entry_source_warehouses(frm);
+  },
+
   refresh(frm) {
     if (cint(frm.doc.custom_uses_finish_allocation)) {
       const items_grid = frm.fields_dict.items && frm.fields_dict.items.grid;
@@ -69,3 +73,53 @@ frappe.ui.form.on("Stock Entry", {
     );
   },
 });
+
+frappe.ui.form.on("Stock Entry Detail", {
+  item_code(frm, cdt, cdn) {
+    return set_stock_entry_source_warehouse(frm, cdt, cdn);
+  },
+});
+
+async function set_stock_entry_source_warehouses(frm) {
+  for (const row of frm.doc.items || []) {
+    await set_stock_entry_source_warehouse(frm, row.doctype, row.name);
+  }
+}
+
+async function set_stock_entry_source_warehouse(frm, cdt, cdn) {
+  const row = locals[cdt] && locals[cdt][cdn];
+  const itemCode = row && row.item_code;
+  const purpose = (frm.doc.purpose || frm.doc.stock_entry_type || "").trim();
+  const isIncomingOutput =
+    ["Manufacture", "Repack", "Process Loss"].includes(purpose) &&
+    (cint(row && row.is_finished_item) || cint(row && row.is_scrap_item));
+
+  if (
+    !row ||
+    !row.item_code ||
+    row.s_warehouse ||
+    purpose === "Material Receipt" ||
+    isIncomingOutput
+  ) {
+    return;
+  }
+
+  const { message: warehouse } = await frappe.call({
+    method: "c4factory.c4_manufacturing.work_order_hooks.get_default_source_warehouse",
+    args: {
+      item_code: row.item_code,
+      item_group: row.item_group,
+      company: frm.doc.company,
+    },
+  });
+
+  const currentRow = locals[cdt] && locals[cdt][cdn];
+  if (
+    warehouse &&
+    currentRow &&
+    currentRow.item_code === itemCode &&
+    !currentRow.s_warehouse
+  ) {
+    await frappe.model.set_value(cdt, cdn, "s_warehouse", warehouse);
+  }
+}

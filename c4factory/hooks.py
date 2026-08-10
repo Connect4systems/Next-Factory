@@ -14,6 +14,8 @@ app_license = "mit"
 doctype_js = {
     "Pick List": "public/js/doctype/pick_list.js",
     "Stock Entry": "public/js/doctype/stock_entry.js",
+    "Material Request": "public/js/doctype/material_request.js",
+    "Purchase Receipt": "public/js/doctype/purchase_receipt.js",
     "BOM": "public/js/doctype/bom/bom_measurement_qty.js",
     "Work Order": "public/js/doctype/work_order.js",
     "Timesheet": "public/js/doctype/timesheet.js",
@@ -49,9 +51,10 @@ doc_events = {
 
     # Stock Entry – costing + WO update
     "Stock Entry": {
-        "before_validate": (
-            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project"
-        ),
+        "before_validate": [
+            "c4factory.c4_manufacturing.item_group_warehouse.set_warehouses_from_item_group",
+            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
+        ],
         "validate": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
@@ -87,6 +90,20 @@ doc_events = {
         ],
         "on_trash": "c4factory.api.work_order_flow.on_stock_entry_trash",
         "after_delete": "c4factory.api.work_order_mold.sync_mold_material_balances",
+    },
+
+    # Material Transfer requests use each item's Item Group default as source.
+    "Material Request": {
+        "before_validate": (
+            "c4factory.c4_manufacturing.item_group_warehouse.set_warehouses_from_item_group"
+        ),
+    },
+
+    # Purchase Receipt items use their Item Group company default warehouse.
+    "Purchase Receipt": {
+        "before_validate": (
+            "c4factory.c4_manufacturing.item_group_warehouse.set_warehouses_from_item_group"
+        ),
     },
 
     # Job Card – keep partial completion from becoming process loss
