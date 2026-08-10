@@ -840,19 +840,149 @@ def set_wip_target_warehouse(doc, method: str | None = None) -> None:
                 ).format(row.idx)
             )
 
-    # Manufacture only: set finished-item valuation from actual consumed
-    # material + allocated Job Card operating cost.
+    # Manufacture only: capitalize allocated operating cost through the
+    # configured account, then value the finished item from material and
+    # Additional Costs.
+    _set_operation_cost_additional_cost(doc, wo, finished_qty)
     _set_manufacture_finished_item_valuation(doc, wo)
+
+
+def _set_operation_cost_additional_cost(doc, wo_doc, finished_qty: float) -> float:
+    """Maintain the controlled Operation Cost row for a Manufacture entry."""
+    allocated_cost = _get_allocated_operation_cost(doc, wo_doc, finished_qty)
+    if doc.meta.has_field("custom_allocated_operation_cost"):
+        doc.custom_allocated_operation_cost = allocated_cost
+
+    operation_rows = [
+        row
+        for row in doc.get("additional_costs") or []
+        if (row.get("description") or "").strip() == "Operation Cost"
+    ]
+    expected = {}
+    if allocated_cost > 0:
+        account = _get_operation_cost_account(wo_doc.company)
+        expected[account] = allocated_cost
+
+    actual = {}
+    for row in operation_rows:
+        actual[row.expense_account] = (
+            flt(actual.get(row.expense_account)) + flt(row.amount)
+        )
+    rows_match = set(actual) == set(expected) and all(
+        abs(flt(actual.get(account)) - amount) <= 0.000001
+        for account, amount in expected.items()
+    )
+    if rows_match:
+        return allocated_cost
+
+    for row in list(operation_rows):
+        doc.remove(row)
+    for account, amount in expected.items():
+        doc.append(
+            "additional_costs",
+            {
+                "expense_account": account,
+                "description": "Operation Cost",
+                "amount": amount,
+            },
+        )
+
+    # Allocate the accounting row to incoming finished goods using ERPNext's
+    # standard Additional Costs calculation.
+    doc.calculate_rate_and_amount(
+        reset_outgoing_rate=False,
+        raise_error_if_no_rate=False,
+    )
+    return allocated_cost
+
+
+def _get_operation_cost_account(company: str) -> str:
+    account = frappe.db.get_single_value(
+        "Manufacturing Settings", "custom_operation_cost_account"
+    )
+    if not account:
+        frappe.throw(_("Set Operation Cost Account in Manufacturing Settings."))
+
+    details = frappe.get_cached_value(
+        "Account", account, ["company", "is_group"], as_dict=True
+    )
+    if not details or details.company != company or flt(details.is_group):
+        frappe.throw(
+            _("Operation Cost Account must be a ledger account for {0}.").format(
+                frappe.bold(company)
+            )
+        )
+    return account
+
+
+def _get_allocated_operation_cost(doc, wo_doc, finished_qty: float) -> float:
+    """Allocate the Work Order operating cost across partial Finish entries."""
+    wo_qty = max(flt(getattr(wo_doc, "qty", 0)), 0.0)
+    wo_produced_before = max(flt(getattr(wo_doc, "produced_qty", 0)), 0.0)
+    wo_produced_after = max(wo_produced_before + finished_qty, finished_qty)
+
+    from c4factory.c4_manufacturing.work_order_hooks import _get_work_order_operating_cost
+
+    total_op_cost = _get_work_order_operating_cost(wo_doc.name)
+    prior_allocated_op_cost = 0.0
+    if doc.meta.has_field("custom_allocated_operation_cost"):
+        prior_allocated_op_cost = flt(
+            frappe.db.sql(
+                """
+                SELECT COALESCE(SUM(custom_allocated_operation_cost), 0)
+                FROM `tabStock Entry`
+                WHERE work_order = %(work_order)s
+                  AND docstatus = 1
+                  AND name != %(current)s
+                  AND (stock_entry_type = 'Manufacture' OR purpose = 'Manufacture')
+                """,
+                {"work_order": wo_doc.name, "current": doc.name or ""},
+            )[0][0]
+        )
+        legacy_values = frappe.db.sql(
+            """
+            SELECT
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(sed.is_finished_item, 0) = 1
+                     AND COALESCE(sed.is_scrap_item, 0) = 0
+                    THEN ABS(sed.basic_amount) ELSE 0 END), 0) AS fg_value,
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(sed.is_finished_item, 0) = 0
+                     AND COALESCE(sed.is_scrap_item, 0) = 0
+                    THEN ABS(sed.basic_amount) ELSE 0 END), 0) AS raw_value
+            FROM `tabStock Entry Detail` sed
+            INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+            WHERE se.work_order = %(work_order)s
+              AND se.docstatus = 1
+              AND COALESCE(se.custom_uses_finish_allocation, 0) = 0
+              AND (se.stock_entry_type = 'Manufacture' OR se.purpose = 'Manufacture')
+            """,
+            {"work_order": wo_doc.name},
+            as_dict=True,
+        )[0]
+        prior_allocated_op_cost += max(
+            flt(legacy_values.fg_value) - flt(legacy_values.raw_value), 0.0
+        )
+
+    remaining_op_cost = max(total_op_cost - prior_allocated_op_cost, 0.0)
+    if bool(flt(doc.get("custom_is_final_finish"))):
+        return remaining_op_cost
+
+    cumulative_target = total_op_cost * wo_produced_after / (wo_qty or 1.0)
+    return min(
+        max(cumulative_target - prior_allocated_op_cost, 0.0),
+        remaining_op_cost,
+    )
 
 
 def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
     """
     For Manufacture entries, compute finished-item basic_rate as:
-      (raw_consumed_material_cost + allocated_operation_cost) / finished_qty
+      (raw_consumed_material_cost - scrap_material_credit) / finished_qty
 
     - raw cost is taken from raw rows in this Stock Entry.
-    - operation cost is taken from actual Job Card totals for the Work Order,
-      allocated to this SE by produced quantity share.
+    - operation cost is carried separately by the controlled Operation Cost
+      Additional Cost row and included in the finished item's amount.
     """
     if not _is_manufacture_like_entry(doc):
         return
@@ -915,69 +1045,8 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
     if finished_qty <= 0:
         return
 
-    wo_qty = max(flt(getattr(wo_doc, "qty", 0)), 0.0)
-    wo_produced_before = max(flt(getattr(wo_doc, "produced_qty", 0)), 0.0)
-    wo_produced_after = max(wo_produced_before + finished_qty, finished_qty)
-
-    from c4factory.c4_manufacturing.work_order_hooks import _get_work_order_operating_cost
-
-    total_op_cost = _get_work_order_operating_cost(wo_doc.name)
-    prior_allocated_op_cost = 0.0
-    if doc.meta.has_field("custom_allocated_operation_cost"):
-        prior_allocated_op_cost = flt(
-            frappe.db.sql(
-                """
-                SELECT COALESCE(SUM(custom_allocated_operation_cost), 0)
-                FROM `tabStock Entry`
-                WHERE work_order = %(work_order)s
-                  AND docstatus = 1
-                  AND name != %(current)s
-                  AND (stock_entry_type = 'Manufacture' OR purpose = 'Manufacture')
-                """,
-                {"work_order": wo_doc.name, "current": doc.name or ""},
-            )[0][0]
-        )
-        legacy_values = frappe.db.sql(
-            """
-            SELECT
-                COALESCE(SUM(CASE
-                    WHEN COALESCE(sed.is_finished_item, 0) = 1
-                     AND COALESCE(sed.is_scrap_item, 0) = 0
-                    THEN ABS(sed.basic_amount) ELSE 0 END), 0) AS fg_value,
-                COALESCE(SUM(CASE
-                    WHEN COALESCE(sed.is_finished_item, 0) = 0
-                     AND COALESCE(sed.is_scrap_item, 0) = 0
-                    THEN ABS(sed.basic_amount) ELSE 0 END), 0) AS raw_value
-            FROM `tabStock Entry Detail` sed
-            INNER JOIN `tabStock Entry` se ON se.name = sed.parent
-            WHERE se.work_order = %(work_order)s
-              AND se.docstatus = 1
-              AND COALESCE(se.custom_uses_finish_allocation, 0) = 0
-              AND (se.stock_entry_type = 'Manufacture' OR se.purpose = 'Manufacture')
-            """,
-            {"work_order": wo_doc.name},
-            as_dict=True,
-        )[0]
-        prior_allocated_op_cost += max(
-            flt(legacy_values.fg_value) - flt(legacy_values.raw_value), 0.0
-        )
-
-    remaining_op_cost = max(total_op_cost - prior_allocated_op_cost, 0.0)
-    is_final_finish = bool(flt(doc.get("custom_is_final_finish")))
-    if is_final_finish:
-        allocated_op_cost = remaining_op_cost
-    else:
-        cumulative_op_target = total_op_cost * wo_produced_after / (wo_qty or 1.0)
-        allocated_op_cost = min(
-            max(cumulative_op_target - prior_allocated_op_cost, 0.0),
-            remaining_op_cost,
-        )
-    if doc.meta.has_field("custom_allocated_operation_cost"):
-        doc.custom_allocated_operation_cost = allocated_op_cost
-
     total_fg_basic_amount = max(
         raw_material_cost
-        + allocated_op_cost
         - scrap_material_credit,
         0.0,
     )

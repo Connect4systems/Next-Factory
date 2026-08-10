@@ -247,9 +247,11 @@ def make_stock_entry(work_order_id, purpose, qty=None):
     # Price the finished good immediately so the draft opened by the user
     # already reflects material valuation + related operation cost.
     from c4factory.c4_manufacturing.stock_entry_hooks import (
+        _set_operation_cost_additional_cost,
         _set_manufacture_finished_item_valuation,
     )
 
+    _set_operation_cost_additional_cost(se, wo, fg_qty)
     _set_manufacture_finished_item_valuation(se, wo)
 
     return se.as_dict()
