@@ -31,6 +31,11 @@ doctype_js = {
 # ---------------------------------------------------------
 
 doc_events = {
+    # Product BOMs keep ERPNext's BOM-{item}-{###} name; Mold BOMs use MLD.
+    "BOM": {
+        "autoname": "c4factory.c4_manufacturing.bom_hooks.autoname",
+    },
+
     # Work Order – source warehouse autofill from Item Group
     "Work Order": {
         "validate": [
@@ -145,6 +150,8 @@ override_doctype_class = {
 # ---------------------------------------------------------
 
 patches = [
+    # BOM type, Product default/backfill, and type-aware naming support
+    "c4factory.patches.v1_0.setup_bom_type_and_naming",
     # Work Order scrap & costing fields
     "c4factory.patches.v1_0.setup_work_order_custom_fields",
     # WO / Pick List / Stock Entry extra fields (includes custom_pl_qty)
@@ -162,6 +169,7 @@ patches = [
     "c4factory.patches.v1_0.setup_continuous_start_qty_field",
     "c4factory.patches.v1_0.setup_paired_production_pick_lists",
     "c4factory.patches.v1_0.setup_work_order_mold_flow",
+    "c4factory.patches.v1_0.make_work_order_mold_optional",
     "c4factory.patches.v1_0.setup_finish_material_allocation",
     "c4factory.patches.v1_0.move_mold_cost_account_to_manufacturing_settings",
     "c4factory.patches.v1_0.setup_operation_cost_account",

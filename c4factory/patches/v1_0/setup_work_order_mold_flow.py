@@ -12,7 +12,8 @@ def execute():
 					"fieldtype": "Link",
 					"options": "BOM",
 					"insert_after": "bom_no",
-					"description": "Required before submitting a new Work Order.",
+					"reqd": 0,
+					"description": "Optional. Select a Mold BOM only when mold material is required.",
 				},
 				{
 					"fieldname": "custom_mold_qty",
@@ -21,7 +22,8 @@ def execute():
 					"insert_after": "qty",
 					"bold": 1,
 					"non_negative": 1,
-					"description": "Required before submitting a new Work Order.",
+					"reqd": 0,
+					"description": "Required only when a Mold BOM is selected.",
 				},
 				{
 					"fieldname": "custom_mold_material_section",

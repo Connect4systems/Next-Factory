@@ -168,12 +168,9 @@ def validate_and_set_mold_materials(wo) -> None:
 	mold_bom_no = wo.get("custom_mold_bom_no")
 	mold_qty = flt(wo.get("custom_mold_qty"))
 	if not mold_bom_no:
-		if wo.docstatus == 1 and getattr(wo, "_action", None) == "submit":
-			frappe.throw(_("Mold BOM No is required before submitting the Work Order."))
-		if wo.docstatus == 0:
-			if wo.get("bom_no"):
-				_validate_bom(wo.bom_no, wo.production_item, "Product")
-			wo.set("custom_mold_materials", [])
+		if wo.get("bom_no"):
+			_validate_bom(wo.bom_no, wo.production_item, "Product")
+		wo.set("custom_mold_materials", [])
 		return
 	if mold_qty <= 0:
 		frappe.throw(_("Mold QTY must be greater than zero."))
