@@ -72,29 +72,22 @@ frappe.ui.form.on("Stock Entry", {
   },
 });
 
-async function add_direct_submit_action(frm) {
-  if (
-    frm.doc.docstatus !== 0 ||
-    frm.is_new() ||
-    !(frm.perm && frm.perm[0] && frm.perm[0].submit)
-  ) {
-    return;
-  }
-
-  const { message: activeWorkflow } = await frappe.call({
-    method: "c4factory.c4_manufacturing.stock_entry_hooks.get_active_stock_entry_workflow",
-  });
-
-  if (
-    activeWorkflow ||
-    frm.doc.docstatus !== 0 ||
-    frm.is_new() ||
-    !(frm.perm && frm.perm[0] && frm.perm[0].submit)
-  ) {
-    return;
-  }
+function add_direct_submit_action(frm) {
+  if (frm.doc.docstatus !== 0 || frm.is_new()) return;
 
   frm.remove_custom_button(__("Submit Stock Entry"));
-  const button = frm.add_custom_button(__("Submit Stock Entry"), () => frm.savesubmit());
+  const button = frm.add_custom_button(__("Submit Stock Entry"), () => {
+    frappe.confirm(__("Submit this Stock Entry?"), () => {
+      frappe.call({
+        method: "c4factory.c4_manufacturing.stock_entry_hooks.submit_stock_entry_without_workflow",
+        args: { stock_entry: frm.doc.name },
+        freeze: true,
+        freeze_message: __("Submitting Stock Entry..."),
+        callback: async (response) => {
+          if (!response.exc) await frm.reload_doc();
+        },
+      });
+    });
+  });
   button.addClass("btn-primary");
 }

@@ -15,6 +15,26 @@ def get_active_stock_entry_workflow() -> str | None:
     )
 
 
+@frappe.whitelist()
+def submit_stock_entry_without_workflow(stock_entry: str) -> dict:
+    """Submit the saved draft after enforcing permission and workflow checks."""
+    active_workflow = get_active_stock_entry_workflow()
+    if active_workflow:
+        frappe.throw(
+            _("Workflow {0} is active. Use its workflow actions instead.").format(
+                frappe.bold(active_workflow)
+            )
+        )
+
+    doc = frappe.get_doc("Stock Entry", stock_entry)
+    if doc.docstatus != 0:
+        frappe.throw(_("Stock Entry {0} is not a draft.").format(frappe.bold(doc.name)))
+
+    doc.check_permission("submit")
+    doc.submit()
+    return doc.as_dict()
+
+
 # ============================================================
 # Helper: get WO items table regardless of field name
 # ============================================================
