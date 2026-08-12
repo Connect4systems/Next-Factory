@@ -5,6 +5,16 @@ from frappe import _
 from frappe.utils import flt
 
 
+@frappe.whitelist()
+def get_active_stock_entry_workflow() -> str | None:
+    """Return the active Stock Entry workflow without requiring Workflow read access."""
+    return frappe.db.get_value(
+        "Workflow",
+        {"document_type": "Stock Entry", "is_active": 1},
+        "name",
+    )
+
+
 # ============================================================
 # Helper: get WO items table regardless of field name
 # ============================================================
