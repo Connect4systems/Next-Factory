@@ -56,10 +56,9 @@ doc_events = {
 
     # Stock Entry – costing + WO update
     "Stock Entry": {
-        "before_validate": [
-            "c4factory.c4_manufacturing.item_group_warehouse.set_warehouses_from_item_group",
-            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
-        ],
+        "before_validate": (
+            "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project"
+        ),
         "validate": [
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
