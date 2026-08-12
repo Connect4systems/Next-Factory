@@ -1,4 +1,38 @@
 frappe.ui.form.on("Stock Entry", {
+  after_save(frm) {
+    if (frm.doc.docstatus !== 0 || frm.is_new()) return;
+
+    window.clearTimeout(frm.__c4_post_save_stabilizer);
+    frm.__c4_user_edited_after_save = false;
+
+    $(frm.wrapper)
+      .off("input.c4_post_save change.c4_post_save")
+      .one("input.c4_post_save change.c4_post_save", () => {
+        frm.__c4_user_edited_after_save = true;
+      });
+
+    const savedName = frm.doc.name;
+    frm.__c4_post_save_stabilizer = window.setTimeout(async () => {
+      delete frm.__c4_post_save_stabilizer;
+      $(frm.wrapper).off("input.c4_post_save change.c4_post_save");
+
+      if (
+        frm.doc.name !== savedName ||
+        frm.doc.docstatus !== 0 ||
+        frm.is_new() ||
+        !frm.is_dirty() ||
+        frm.__c4_user_edited_after_save
+      ) {
+        return;
+      }
+
+      // Some Stock Entry callbacks (including ERPNext warehouse/rate calls and
+      // database Client Scripts) can finish after save and mark the form dirty
+      // again. Reload the document saved by the server so Submit stays visible.
+      await frm.reload_doc();
+    }, 1500);
+  },
+
   refresh(frm) {
     if (cint(frm.doc.custom_uses_finish_allocation)) {
       const items_grid = frm.fields_dict.items && frm.fields_dict.items.grid;
