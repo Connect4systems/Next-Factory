@@ -42,6 +42,7 @@ doc_events = {
             "c4factory.c4_manufacturing.work_order_hooks.set_source_warehouse_from_item_group",
             "c4factory.c4_manufacturing.work_order_hooks.update_scrap_and_costing",
         ],
+        "on_submit": "c4factory.c4_manufacturing.work_order_hooks.attach_public_bom_files",
     },
 
     # Pick List custom flow

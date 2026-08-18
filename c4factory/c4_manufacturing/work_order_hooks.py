@@ -3,6 +3,67 @@ from frappe import _
 from frappe.utils import cint
 
 
+def attach_public_bom_files(doc, method=None):
+    """Attach public Product and Mold BOM files to a submitted Work Order.
+
+    A new File record is created for the Work Order while the underlying public
+    file is reused. Existing Work Order file URLs are skipped, which makes this
+    safe to call more than once and avoids duplicates shared by both BOMs.
+    """
+    work_order_name = doc.get("name")
+    if not work_order_name:
+        return 0
+
+    bom_names = []
+    for fieldname in ("bom_no", "custom_mold_bom_no"):
+        bom_name = doc.get(fieldname)
+        if bom_name and bom_name not in bom_names:
+            bom_names.append(bom_name)
+
+    if not bom_names:
+        return 0
+
+    existing_urls = set(
+        frappe.get_all(
+            "File",
+            filters={
+                "attached_to_doctype": "Work Order",
+                "attached_to_name": work_order_name,
+                "is_private": 0,
+            },
+            pluck="file_url",
+        )
+    )
+    attached_count = 0
+
+    for bom_name in bom_names:
+        source_files = frappe.get_all(
+            "File",
+            filters={
+                "attached_to_doctype": "BOM",
+                "attached_to_name": bom_name,
+                "is_private": 0,
+            },
+            fields=["name", "file_url"],
+            order_by="creation asc",
+        )
+
+        for source_file in source_files:
+            file_url = source_file.get("file_url")
+            if not file_url or file_url in existing_urls:
+                continue
+
+            frappe.get_doc("File", source_file.name).create_attachment_copy(
+                attached_to_doctype="Work Order",
+                attached_to_name=work_order_name,
+                ignore_permissions=True,
+            )
+            existing_urls.add(file_url)
+            attached_count += 1
+
+    return attached_count
+
+
 def copy_scrap_from_bom(doc, method=None):
     """
     When a new Work Order is created from a BOM, copy BOM.scrap_items
