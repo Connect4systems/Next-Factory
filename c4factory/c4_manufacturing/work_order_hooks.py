@@ -53,15 +53,37 @@ def attach_public_bom_files(doc, method=None):
             if not file_url or file_url in existing_urls:
                 continue
 
-            frappe.get_doc("File", source_file.name).create_attachment_copy(
-                attached_to_doctype="Work Order",
-                attached_to_name=work_order_name,
-                ignore_permissions=True,
-            )
+            source_doc = frappe.get_doc("File", source_file.name)
+            if not source_doc.is_remote_file and not source_doc.exists_on_disk():
+                _log_missing_bom_file(source_doc, bom_name, work_order_name)
+                continue
+
+            try:
+                source_doc.create_attachment_copy(
+                    attached_to_doctype="Work Order",
+                    attached_to_name=work_order_name,
+                    ignore_permissions=True,
+                )
+            except OSError:
+                # The file can disappear after the existence check. A stale BOM
+                # attachment must not block Work Order submission or migration.
+                _log_missing_bom_file(source_doc, bom_name, work_order_name)
+                continue
+
             existing_urls.add(file_url)
             attached_count += 1
 
     return attached_count
+
+
+def _log_missing_bom_file(source_file, bom_name, work_order_name):
+    frappe.logger("c4factory").warning(
+        "Skipped missing BOM attachment %s (%s) from %s while syncing %s",
+        source_file.name,
+        source_file.file_url,
+        bom_name,
+        work_order_name,
+    )
 
 
 def copy_scrap_from_bom(doc, method=None):
