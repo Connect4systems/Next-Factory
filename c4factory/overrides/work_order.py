@@ -12,17 +12,18 @@ class WorkOrder(ERPNextWorkOrder):
   Goal:
   - First time: when there are NO required_items, use ERPNext logic to
     populate from BOM.
-  - After that: if required_items already has rows, do not rebuild or
-    reset them automatically, so the user can freely edit required_qty,
-    add or remove rows.
+  - After that: keep the user's row composition, but recalculate BOM-backed
+    quantities when Qty To Manufacture changes. The user can still edit,
+    add, or remove rows after recalculation.
   - Provide a stronger `set_status` implementation that follows the
     standard status list while preserving other logic.
   """
 
   def set_required_items(self, reset_only_qty: bool = False):  # signature must match core
     """
-    ERPNext sometimes calls set_required_items(reset_only_qty=True).
-    We accept the same argument, but if rows already exist we do nothing.
+    Populate new Work Orders from the BOM. When rows already exist, recalculate
+    the BOM-backed quantities for the current Work Order quantity while keeping
+    manually added rows and allowing the user to edit the result afterwards.
     """
 
     # If there are no rows yet, use standard behaviour (populate from BOM)
@@ -32,11 +33,30 @@ class WorkOrder(ERPNextWorkOrder):
       set_source_warehouse_from_item_group(self)
       return result
 
-    # If rows already exist:
-    # - when reset_only_qty is True, core would normally recompute required_qty.
-    # - we skip this to keep the user edits.
+    # A Qty/BOM field event sets this flag. Normal saves deliberately keep any
+    # manual quantities entered after the automatic recalculation.
+    if self.flags.get("c4_recalculate_required_items"):
+      self._normalize_required_item_quantities()
     set_source_warehouse_from_item_group(self)
     return
+
+  @frappe.whitelist()
+  def get_items_and_operations_from_bom(self):
+    """Recalculate materials without replacing submitted operation rows."""
+    self.flags.c4_recalculate_required_items = True
+    try:
+      if self.docstatus != 1:
+        return super().get_items_and_operations_from_bom()
+
+      self.set_required_items()
+
+      from erpnext.manufacturing.doctype.work_order.work_order import (
+        check_if_scrap_warehouse_mandatory,
+      )
+
+      return check_if_scrap_warehouse_mandatory(self.bom_no)
+    finally:
+      self.flags.pop("c4_recalculate_required_items", None)
 
   def validate(self):
     super().validate()
