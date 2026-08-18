@@ -65,7 +65,7 @@ frappe.ui.form.on("Work Order", {
 });
 
 function capture_work_order_edit_baseline(frm) {
-  if (frm.is_new()) return;
+  if (frm.is_new() || frm.doc.docstatus !== 1) return;
   frm.__c4_edit_baseline = get_work_order_edit_snapshot(frm.doc);
 }
 
@@ -77,7 +77,7 @@ async function add_work_order_edit_reason(frm) {
   try {
     await frm.add_comment(
       "Comment",
-      `${__("سبب تعديل الكمية/الخامات")}: ${reason}`
+      `${__("سبب تعديل الخامات المطلوبة")}: ${reason}`
     );
   } catch (error) {
     console.error(error);
@@ -93,37 +93,25 @@ async function add_work_order_edit_reason(frm) {
 
 function get_work_order_edit_snapshot(doc) {
   return {
-    qty: flt(doc.qty),
-    materials: [
-      ...get_work_order_material_rows(
-        doc.required_items,
-        __("خامات الإنتاج")
-      ),
-      ...get_work_order_material_rows(
-        doc.custom_additional_material,
-        __("خامات إضافية")
-      ),
-      ...get_work_order_material_rows(
-        doc.custom_mold_materials,
-        __("خامات القالب")
-      ),
-    ],
+    materials: get_work_order_material_rows(doc.required_items),
   };
 }
 
-function get_work_order_material_rows(rows, materialType) {
-  return (rows || []).map((row) => ({
-    material_type: materialType,
+function get_work_order_material_rows(rows) {
+  return (rows || []).map((row, index) => ({
+    row_name: row.name || `row-${index}`,
     item_code: row.item_code || "",
-    required_qty: flt(row.required_qty),
-    source_warehouse: row.source_warehouse || "",
+    required_qty: flt(row.required_qty, 9),
   }));
 }
 
 function work_order_quantity_or_materials_changed(frm) {
-  if (frm.is_new() || !frm.__c4_edit_baseline) return false;
+  if (frm.doc.docstatus !== 1 || !frm.__c4_edit_baseline) return false;
   const current = get_work_order_edit_snapshot(frm.doc);
-  return JSON.stringify(current) !== JSON.stringify(frm.__c4_edit_baseline);
+  return get_required_material_changes(
+    frm.__c4_edit_baseline.materials,
+    current.materials
+  ).length > 0;
 }
 
 function confirm_work_order_edit(frm) {
@@ -153,7 +141,7 @@ function confirm_work_order_edit(frm) {
           reqd: 1,
         },
       ],
-      primary_action_label: __("تأكيد التعديل"),
+      primary_action_label: __("تأكيد وحفظ التعديل"),
       primary_action() {
         const values = dialog.get_values();
         if (!values) return;
@@ -166,7 +154,7 @@ function confirm_work_order_edit(frm) {
         finish(true);
         dialog.hide();
       },
-      secondary_action_label: __("تراجع"),
+      secondary_action_label: __("تراجع وتعديل القيم"),
       secondary_action() {
         finish(false);
         dialog.hide();
@@ -179,60 +167,67 @@ function confirm_work_order_edit(frm) {
 }
 
 function build_work_order_change_summary(previous, current) {
-  const quantityChanged = previous.qty !== current.qty;
-  const materialsChanged =
-    JSON.stringify(previous.materials) !== JSON.stringify(current.materials);
-  const sections = [];
-
-  if (quantityChanged) {
-    sections.push(`
-      <div class="mb-3">
-        <b>${__("الكمية")}</b>
-        <div>${__("الحالية")}: ${format_work_order_qty(previous.qty)}</div>
-        <div>${__("الجديدة")}: ${format_work_order_qty(current.qty)}</div>
-      </div>
-    `);
-  }
-
-  if (materialsChanged) {
-    sections.push(`
-      <div class="row">
-        <div class="col-sm-6">
-          <b>${__("الخامات الحالية")}</b>
-          ${build_materials_summary_table(previous.materials)}
-        </div>
-        <div class="col-sm-6">
-          <b>${__("الخامات الجديدة")}</b>
-          ${build_materials_summary_table(current.materials)}
-        </div>
-      </div>
-    `);
-  }
+  const changes = get_required_material_changes(
+    previous.materials,
+    current.materials
+  );
 
   return `
     <p>${__(
-      "هل أنت متأكد من تعديل أمر الشغل؟ سيتم تحديث الكمية و/أو الخامات دون إلغاء الأمر."
+      "هل أنت متأكد من تعديل الخامات المطلوبة لأمر الشغل المعتمد؟"
     )}</p>
-    ${sections.join("")}
+    ${build_material_changes_table(changes)}
     <p class="text-warning">
       ${__("قد يؤثر هذا التعديل على المخزون والتكلفة وخطة الإنتاج.")}
+    </p>
+    <p class="text-muted">
+      ${__("اضغط على تراجع للعودة وتغيير القيم قبل الحفظ.")}
     </p>
   `;
 }
 
-function build_materials_summary_table(materials) {
-  if (!materials.length) {
-    return `<p class="text-muted">${__("لا توجد خامات")}</p>`;
+function get_required_material_changes(previousMaterials, currentMaterials) {
+  const previousByRow = new Map(
+    previousMaterials.map((row) => [row.row_name, row])
+  );
+  const currentByRow = new Map(
+    currentMaterials.map((row) => [row.row_name, row])
+  );
+  const changes = [];
+
+  for (const previous of previousMaterials) {
+    const current = currentByRow.get(previous.row_name);
+    if (!current) {
+      changes.push({ type: "deleted", previous, current: null });
+      continue;
+    }
+    if (
+      previous.item_code !== current.item_code ||
+      Math.abs(previous.required_qty - current.required_qty) > 0.000000001
+    ) {
+      changes.push({ type: "changed", previous, current });
+    }
   }
 
-  const rows = materials
+  for (const current of currentMaterials) {
+    if (!previousByRow.has(current.row_name)) {
+      changes.push({ type: "added", previous: null, current });
+    }
+  }
+
+  return changes;
+}
+
+function build_material_changes_table(changes) {
+  const rows = changes
     .map(
-      (row) => `
+      ({ type, previous, current }) => `
         <tr>
-          <td>${escape_work_order_summary(row.material_type)}</td>
-          <td>${escape_work_order_summary(row.item_code)}</td>
-          <td class="text-right">${format_work_order_qty(row.required_qty)}</td>
-          <td>${escape_work_order_summary(row.source_warehouse || "-")}</td>
+          <td>${format_material_change_type(type)}</td>
+          <td>${escape_work_order_summary(previous?.item_code || "-")}</td>
+          <td>${escape_work_order_summary(current?.item_code || "-")}</td>
+          <td class="text-right">${format_work_order_qty(previous?.required_qty)}</td>
+          <td class="text-right">${format_work_order_qty(current?.required_qty)}</td>
         </tr>
       `
     )
@@ -243,10 +238,11 @@ function build_materials_summary_table(materials) {
       <table class="table table-bordered table-condensed">
         <thead>
           <tr>
-            <th>${__("النوع")}</th>
-            <th>${__("الصنف")}</th>
-            <th>${__("الكمية")}</th>
-            <th>${__("المخزن")}</th>
+            <th>${__("التعديل")}</th>
+            <th>${__("الخامة السابقة")}</th>
+            <th>${__("الخامة الجديدة")}</th>
+            <th>${__("الكمية السابقة")}</th>
+            <th>${__("الكمية الجديدة")}</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -255,7 +251,17 @@ function build_materials_summary_table(materials) {
   `;
 }
 
+function format_material_change_type(type) {
+  const labels = {
+    added: __("إضافة"),
+    deleted: __("حذف"),
+    changed: __("تعديل"),
+  };
+  return labels[type] || type;
+}
+
 function format_work_order_qty(value) {
+  if (value === undefined || value === null) return "-";
   return format_number(flt(value), null, 3);
 }
 

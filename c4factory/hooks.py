@@ -174,6 +174,7 @@ patches = [
     "c4factory.patches.v1_0.setup_operation_cost_account",
     "c4factory.patches.v1_0.setup_timesheet_work_order",
     "c4factory.patches.v1_0.allow_submitted_work_order_edits",
+    "c4factory.patches.v1_0.allow_submitted_work_order_item_amount_edit",
 ]
 
 override_doctype_dashboards = {
