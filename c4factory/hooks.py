@@ -38,6 +38,9 @@ doc_events = {
 
     # Work Order – source warehouse autofill from Item Group
     "Work Order": {
+        "before_validate": (
+            "c4factory.c4_manufacturing.work_order_hooks.copy_sales_order_item_specs"
+        ),
         "validate": [
             "c4factory.c4_manufacturing.work_order_hooks.set_source_warehouse_from_item_group",
             "c4factory.c4_manufacturing.work_order_hooks.update_scrap_and_costing",

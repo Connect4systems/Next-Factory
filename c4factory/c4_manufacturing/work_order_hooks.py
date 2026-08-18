@@ -3,6 +3,36 @@ from frappe import _
 from frappe.utils import cint
 
 
+SALES_ORDER_ITEM_SPEC_FIELDS = (
+    "custom_priority_",
+    "custom_finish",
+    "custom_dimitions",
+    "custom_color",
+)
+
+
+def copy_sales_order_item_specs(doc, method=None):
+    """Copy manufacturing specifications from the linked Sales Order Item."""
+    if doc.get("docstatus") != 0:
+        return
+
+    sales_order_item = doc.get("sales_order_item")
+    if not sales_order_item:
+        return
+
+    values = frappe.db.get_value(
+        "Sales Order Item",
+        sales_order_item,
+        SALES_ORDER_ITEM_SPEC_FIELDS,
+        as_dict=True,
+    )
+    if not values:
+        return
+
+    for fieldname in SALES_ORDER_ITEM_SPEC_FIELDS:
+        doc.set(fieldname, values.get(fieldname))
+
+
 def attach_public_bom_files(doc, method=None):
     """Attach public Product and Mold BOM files to a submitted Work Order.
 

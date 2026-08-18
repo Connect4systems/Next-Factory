@@ -1837,7 +1837,7 @@
    "name": "Work Order-custom_priority_",
    "no_copy": 0,
    "non_negative": 0,
-   "options": null,
+   "options": "\n1\n2\n3",
    "owner": "Administrator",
    "permlevel": 0,
    "placeholder": null,
