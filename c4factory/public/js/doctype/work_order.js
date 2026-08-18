@@ -1,6 +1,9 @@
 // c4factory • Work Order — allow editing required_qty in items
 
 frappe.ui.form.on("Work Order", {
+  onload(frm) {
+    capture_work_order_edit_baseline(frm);
+  },
   refresh(frm) {
     configure_required_items_grid(frm);
     set_source_warehouses(frm);
@@ -15,6 +18,18 @@ frappe.ui.form.on("Work Order", {
     hide_material_consumption_button(frm);
     configure_finish_button(frm);
     refresh_material_transfer_progress(frm);
+  },
+  async before_save(frm) {
+    if (!work_order_quantity_or_materials_changed(frm)) return;
+
+    const confirmed = await confirm_work_order_edit(frm);
+    if (!confirmed) {
+      frappe.validated = false;
+    }
+  },
+  async after_save(frm) {
+    capture_work_order_edit_baseline(frm);
+    await add_work_order_edit_reason(frm);
   },
   onload_post_render(frm) {
     configure_required_items_grid(frm);
@@ -48,6 +63,205 @@ frappe.ui.form.on("Work Order", {
     hide_create_job_card_button(frm);
   }
 });
+
+function capture_work_order_edit_baseline(frm) {
+  if (frm.is_new()) return;
+  frm.__c4_edit_baseline = get_work_order_edit_snapshot(frm.doc);
+}
+
+async function add_work_order_edit_reason(frm) {
+  const reason = frm.__c4_edit_reason;
+  delete frm.__c4_edit_reason;
+  if (!reason) return;
+
+  try {
+    await frm.add_comment(
+      "Comment",
+      `${__("سبب تعديل الكمية/الخامات")}: ${reason}`
+    );
+  } catch (error) {
+    console.error(error);
+    frappe.show_alert(
+      {
+        message: __("تم حفظ التعديل، وتعذّر إضافة السبب إلى سجل التعليقات."),
+        indicator: "orange",
+      },
+      10
+    );
+  }
+}
+
+function get_work_order_edit_snapshot(doc) {
+  return {
+    qty: flt(doc.qty),
+    materials: [
+      ...get_work_order_material_rows(
+        doc.required_items,
+        __("خامات الإنتاج")
+      ),
+      ...get_work_order_material_rows(
+        doc.custom_additional_material,
+        __("خامات إضافية")
+      ),
+      ...get_work_order_material_rows(
+        doc.custom_mold_materials,
+        __("خامات القالب")
+      ),
+    ],
+  };
+}
+
+function get_work_order_material_rows(rows, materialType) {
+  return (rows || []).map((row) => ({
+    material_type: materialType,
+    item_code: row.item_code || "",
+    required_qty: flt(row.required_qty),
+    source_warehouse: row.source_warehouse || "",
+  }));
+}
+
+function work_order_quantity_or_materials_changed(frm) {
+  if (frm.is_new() || !frm.__c4_edit_baseline) return false;
+  const current = get_work_order_edit_snapshot(frm.doc);
+  return JSON.stringify(current) !== JSON.stringify(frm.__c4_edit_baseline);
+}
+
+function confirm_work_order_edit(frm) {
+  const previous = frm.__c4_edit_baseline;
+  const current = get_work_order_edit_snapshot(frm.doc);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const dialog = new frappe.ui.Dialog({
+      title: __("تأكيد تعديل أمر الشغل"),
+      fields: [
+        {
+          fieldname: "changes",
+          fieldtype: "HTML",
+          options: build_work_order_change_summary(previous, current),
+        },
+        {
+          fieldname: "reason",
+          fieldtype: "Small Text",
+          label: __("سبب التعديل"),
+          reqd: 1,
+        },
+      ],
+      primary_action_label: __("تأكيد التعديل"),
+      primary_action() {
+        const values = dialog.get_values();
+        if (!values) return;
+        const reason = String(values.reason || "").trim();
+        if (!reason) {
+          frappe.msgprint(__("يرجى إدخال سبب التعديل."));
+          return;
+        }
+        frm.__c4_edit_reason = reason;
+        finish(true);
+        dialog.hide();
+      },
+      secondary_action_label: __("تراجع"),
+      secondary_action() {
+        finish(false);
+        dialog.hide();
+      },
+    });
+
+    dialog.$wrapper.on("hidden.bs.modal", () => finish(false));
+    dialog.show();
+  });
+}
+
+function build_work_order_change_summary(previous, current) {
+  const quantityChanged = previous.qty !== current.qty;
+  const materialsChanged =
+    JSON.stringify(previous.materials) !== JSON.stringify(current.materials);
+  const sections = [];
+
+  if (quantityChanged) {
+    sections.push(`
+      <div class="mb-3">
+        <b>${__("الكمية")}</b>
+        <div>${__("الحالية")}: ${format_work_order_qty(previous.qty)}</div>
+        <div>${__("الجديدة")}: ${format_work_order_qty(current.qty)}</div>
+      </div>
+    `);
+  }
+
+  if (materialsChanged) {
+    sections.push(`
+      <div class="row">
+        <div class="col-sm-6">
+          <b>${__("الخامات الحالية")}</b>
+          ${build_materials_summary_table(previous.materials)}
+        </div>
+        <div class="col-sm-6">
+          <b>${__("الخامات الجديدة")}</b>
+          ${build_materials_summary_table(current.materials)}
+        </div>
+      </div>
+    `);
+  }
+
+  return `
+    <p>${__(
+      "هل أنت متأكد من تعديل أمر الشغل؟ سيتم تحديث الكمية و/أو الخامات دون إلغاء الأمر."
+    )}</p>
+    ${sections.join("")}
+    <p class="text-warning">
+      ${__("قد يؤثر هذا التعديل على المخزون والتكلفة وخطة الإنتاج.")}
+    </p>
+  `;
+}
+
+function build_materials_summary_table(materials) {
+  if (!materials.length) {
+    return `<p class="text-muted">${__("لا توجد خامات")}</p>`;
+  }
+
+  const rows = materials
+    .map(
+      (row) => `
+        <tr>
+          <td>${escape_work_order_summary(row.material_type)}</td>
+          <td>${escape_work_order_summary(row.item_code)}</td>
+          <td class="text-right">${format_work_order_qty(row.required_qty)}</td>
+          <td>${escape_work_order_summary(row.source_warehouse || "-")}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="table-responsive mt-2">
+      <table class="table table-bordered table-condensed">
+        <thead>
+          <tr>
+            <th>${__("النوع")}</th>
+            <th>${__("الصنف")}</th>
+            <th>${__("الكمية")}</th>
+            <th>${__("المخزن")}</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function format_work_order_qty(value) {
+  return format_number(flt(value), null, 3);
+}
+
+function escape_work_order_summary(value) {
+  return frappe.utils.escape_html(String(value || ""));
+}
 
 function configure_mold_bom_queries(frm) {
   const apply_queries = () => {
@@ -214,14 +428,22 @@ frappe.ui.form.on("Work Order Item", {
   }
 });
 
-// Keep draft Work Order materials fully editable. ERPNext marks this grid as
-// non-addable/non-deletable after populating it from the BOM.
+// Keep saved and submitted Work Order materials editable. ERPNext marks this
+// grid as non-addable/non-deletable after populating it from the BOM.
 function configure_required_items_grid(frm) {
-  if (frm.doc.docstatus !== 0) return;
+  if (frm.doc.docstatus === 2) return;
+
+  if (frm.fields_dict.qty) {
+    frm.fields_dict.qty.df.allow_on_submit = 1;
+    frm.set_df_property("qty", "read_only", 0);
+  }
 
   // ERPNext v15 uses required_items; keep items as a compatibility fallback.
   const table_field =
     frm.fields_dict.required_items || frm.fields_dict.items;
+  if (table_field) {
+    table_field.df.allow_on_submit = 1;
+  }
   apply_required_items_grid_permissions(table_field);
 
   // Also fix the child DocType meta so newly added/rendered rows can select an
@@ -234,6 +456,7 @@ function configure_required_items_grid(frm) {
     );
     if (df) {
       df.read_only = 0;
+      df.allow_on_submit = 1;
     }
   }
 
@@ -243,7 +466,7 @@ function configure_required_items_grid(frm) {
   frm.__c4_required_items_grid_timer = setTimeout(() => {
     const current_field =
       frm.fields_dict.required_items || frm.fields_dict.items;
-    if (frm.doc.docstatus !== 0) return;
+    if (frm.doc.docstatus === 2) return;
     apply_required_items_grid_permissions(current_field);
   }, 0);
 }

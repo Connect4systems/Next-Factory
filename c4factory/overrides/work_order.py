@@ -114,6 +114,70 @@ class WorkOrder(ERPNextWorkOrder):
     self.update_completed_qty_in_material_request()
     self.update_planned_qty()
 
+  def before_update_after_submit(self):
+    """Validate the quantities that users may edit on a submitted Work Order."""
+    parent_handler = getattr(super(), "before_update_after_submit", None)
+    if callable(parent_handler):
+      parent_handler()
+
+    if flt(self.qty) <= 0:
+      frappe.throw(_("Quantity to Manufacture must be greater than 0."))
+
+    completed_qty = flt(self.produced_qty) + flt(self.get("process_loss_qty"))
+    if flt(self.qty) < completed_qty:
+      frappe.throw(
+        _("Quantity to Manufacture cannot be less than the completed quantity ({0}).").format(
+          completed_qty
+        )
+      )
+
+    if not self.get("required_items"):
+      frappe.throw(_("At least one required material is needed for the Work Order."))
+
+    self.validate_warehouse_belongs_to_company()
+
+  def on_update_after_submit(self):
+    """Refresh linked planning quantities after an approved submitted edit."""
+    parent_handler = getattr(super(), "on_update_after_submit", None)
+    if callable(parent_handler):
+      parent_handler()
+
+    previous = self.get_doc_before_save()
+    if not previous:
+      return
+
+    quantity_changed = flt(previous.qty) != flt(self.qty)
+    materials_changed = self._required_materials_signature(previous) != self._required_materials_signature(
+      self
+    )
+    if not (quantity_changed or materials_changed):
+      return
+
+    if quantity_changed:
+      if self.production_plan and frappe.db.exists(
+        "Production Plan Item Reference", {"parent": self.production_plan}
+      ):
+        self.update_work_order_qty_in_combined_so()
+      else:
+        self.update_work_order_qty_in_so()
+      self.update_ordered_qty()
+      self.update_completed_qty_in_material_request()
+      self.update_planned_qty()
+
+    self.update_reserved_qty_for_production()
+    self.set_status()
+
+  @staticmethod
+  def _required_materials_signature(work_order):
+    return [
+      (
+        row.get("item_code"),
+        flt(row.get("required_qty")),
+        row.get("source_warehouse"),
+      )
+      for row in work_order.get("required_items") or []
+    ]
+
   def set_status(self):
     """
     Compute Work Order `status` to follow the standard sequence:

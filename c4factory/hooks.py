@@ -173,6 +173,7 @@ patches = [
     "c4factory.patches.v1_0.move_mold_cost_account_to_manufacturing_settings",
     "c4factory.patches.v1_0.setup_operation_cost_account",
     "c4factory.patches.v1_0.setup_timesheet_work_order",
+    "c4factory.patches.v1_0.allow_submitted_work_order_edits",
 ]
 
 override_doctype_dashboards = {
