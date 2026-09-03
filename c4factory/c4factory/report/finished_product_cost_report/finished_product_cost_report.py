@@ -120,10 +120,7 @@ def get_data(filters):
 				WHEN manufacture.finished_item_qty = 0 THEN 0
 				ELSE manufacture.manufactured_value / manufacture.finished_item_qty
 			END AS valuation_rate,
-			CASE
-				WHEN COALESCE(bom.quantity, 0) = 0 THEN 0
-				ELSE COALESCE(bom.total_cost, 0) * COALESCE(wo.qty, 0) / bom.quantity
-			END AS bom_cost,
+			COALESCE(bom.total_cost, 0) AS bom_cost,
 			COALESCE(
 				linked_soi.base_rate,
 				(

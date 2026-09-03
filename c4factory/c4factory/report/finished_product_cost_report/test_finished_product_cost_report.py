@@ -50,6 +50,8 @@ class TestFinishedProductCostReport(FrappeTestCase):
 		self.assertIn("company.default_currency AS currency", query)
 		self.assertIn("linked_soi.base_rate", query)
 		self.assertIn("finished.item_code = manufacture_wo.production_item", query)
+		self.assertIn("COALESCE(bom.total_cost, 0) AS bom_cost", query)
+		self.assertNotIn("COALESCE(bom.total_cost, 0) * COALESCE(wo.qty, 0)", query)
 
 	def test_rejects_reversed_date_range(self):
 		with self.assertRaises(frappe.ValidationError):
