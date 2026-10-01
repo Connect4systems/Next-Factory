@@ -25,6 +25,12 @@ def get_columns():
 			"width": 180,
 		},
 		{
+			"label": _("Stock Entry Date"),
+			"fieldname": "stock_entry_date",
+			"fieldtype": "Date",
+			"width": 140,
+		},
+		{
 			"label": _("Sales Order ID"),
 			"fieldname": "sales_order",
 			"fieldtype": "Link",
@@ -109,6 +115,7 @@ def get_data(filters):
 		f"""
 		SELECT
 			wo.name AS work_order,
+			manufacture.stock_entry_date,
 			COALESCE(NULLIF(wo.sales_order, ''), linked_soi.parent) AS sales_order,
 			so.customer,
 			COALESCE(NULLIF(wo.project, ''), so.project) AS project,
@@ -138,6 +145,7 @@ def get_data(filters):
 		INNER JOIN (
 			SELECT
 				se.work_order,
+				MAX(se.posting_date) AS stock_entry_date,
 				SUM(COALESCE(finished.qty, se.fg_completed_qty, 0)) AS finished_item_qty,
 				SUM(
 					CASE
