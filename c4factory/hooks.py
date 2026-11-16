@@ -190,6 +190,7 @@ patches = [
     "c4factory.patches.v1_0.setup_timesheet_work_order",
     "c4factory.patches.v1_0.setup_continuous_costing",
     "c4factory.patches.v1_0.enable_continuous_costing_by_default",
+    "c4factory.patches.v1_0.preserve_historical_costing_modes",
     "c4factory.patches.v1_0.allow_submitted_work_order_edits",
     "c4factory.patches.v1_0.allow_submitted_work_order_item_amount_edit",
 ]

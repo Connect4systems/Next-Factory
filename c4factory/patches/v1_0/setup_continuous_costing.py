@@ -12,7 +12,7 @@ def execute():
 					"fieldtype": "Check",
 					"insert_after": "update_consumed_material_cost_in_project",
 					"allow_on_submit": 1,
-					"default": "1",
+					"default": "0",
 					"no_copy": 1,
 					"description": "Pool actual transfers and Timesheets across all finished batches.",
 				},
