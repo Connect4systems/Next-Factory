@@ -1,0 +1,27 @@
+{
+ "doctype": "DocType",
+ "name": "Continuous Cost Settlement",
+ "module": "C4Factory",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": ["work_order", "status", "finalize_timesheets", "produced_qty", "total_cost", "plan", "reposts", "error"],
+ "fields": [
+  {"fieldname": "work_order", "label": "Work Order", "fieldtype": "Link", "options": "Work Order", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "status", "label": "Status", "fieldtype": "Select", "options": "Planned\nReposting\nCompleted\nFailed", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "finalize_timesheets", "label": "Final Timesheet Settlement", "fieldtype": "Check", "read_only": 1},
+  {"fieldname": "produced_qty", "label": "Finished Quantity", "fieldtype": "Float", "read_only": 1},
+  {"fieldname": "total_cost", "label": "Total Cost", "fieldtype": "Currency", "read_only": 1},
+  {"fieldname": "plan", "label": "Before and After Cost Audit", "fieldtype": "Code", "options": "JSON", "read_only": 1},
+  {"fieldname": "reposts", "label": "Repost Item Valuation References", "fieldtype": "Code", "options": "JSON", "read_only": 1},
+  {"fieldname": "error", "label": "Error", "fieldtype": "Long Text", "read_only": 1}
+ ],
+ "permissions": [
+  {"role": "Manufacturing User", "read": 1},
+  {"role": "Manufacturing Manager", "read": 1},
+  {"role": "Stock Manager", "read": 1},
+  {"role": "System Manager", "read": 1}
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

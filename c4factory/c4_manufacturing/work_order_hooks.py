@@ -194,6 +194,12 @@ def update_scrap_and_costing(doc, method=None):
         c4_total_cost           = raw + operating - scrap
     """
 
+    if doc.get("custom_continuous_costing"):
+        from c4factory.api.work_order_costing import cost_summary_values
+
+        doc.update(cost_summary_values(doc))
+        return
+
     # --- 1) Scrap rows + Scrap Material Cost ---
     total_scrap_amount = 0.0
 
@@ -233,6 +239,9 @@ def _get_work_order_operating_cost(work_order_name: str) -> float:
         _get_work_order_operating_cost_from_job_cards,
     )
 
+    if (frappe.get_meta("Work Order").has_field("custom_continuous_costing")
+            and frappe.db.get_value("Work Order", work_order_name, "custom_continuous_costing")):
+        return _get_work_order_timesheet_cost(work_order_name)
     return _get_work_order_operating_cost_from_job_cards(
         work_order_name
     ) + _get_work_order_timesheet_cost(work_order_name)

@@ -38,10 +38,13 @@ doc_events = {
 
     # Work Order – source warehouse autofill from Item Group
     "Work Order": {
+        "before_insert": "c4factory.api.work_order_costing.set_new_order_costing_mode",
+        "before_update_after_submit": "c4factory.api.work_order_costing.validate_order_mode",
         "before_validate": (
             "c4factory.c4_manufacturing.work_order_hooks.copy_sales_order_item_specs"
         ),
         "validate": [
+            "c4factory.api.work_order_costing.validate_order_mode",
             "c4factory.c4_manufacturing.work_order_hooks.set_source_warehouse_from_item_group",
             "c4factory.c4_manufacturing.work_order_hooks.update_scrap_and_costing",
         ],
@@ -72,6 +75,7 @@ doc_events = {
             "c4factory.c4_manufacturing.stock_entry_hooks.set_wip_target_warehouse",
         ],
         "before_submit": [
+            "c4factory.api.work_order_costing.validate_stock_change",
             "c4factory.c4_manufacturing.stock_entry_hooks.validate_additional_material_transfer",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_work_order_project",
             "c4factory.api.work_order_mold.validate_mold_material_issue",
@@ -81,7 +85,10 @@ doc_events = {
             "c4factory.c4_manufacturing.stock_entry_hooks.set_wip_target_warehouse",
             "c4factory.c4_manufacturing.stock_entry_hooks.set_pick_list_transferred_production_qty",
         ],
-        "before_cancel": "c4factory.c4_manufacturing.stock_entry_hooks.prevent_allocated_transfer_cancel",
+        "before_cancel": [
+            "c4factory.api.work_order_costing.validate_stock_change",
+            "c4factory.c4_manufacturing.stock_entry_hooks.prevent_allocated_transfer_cancel",
+        ],
         "on_submit": [
             "c4factory.c4_manufacturing.stock_entry_hooks.apply_additional_material_to_work_order",
             "c4factory.c4_manufacturing.stock_entry_hooks.on_submit_update_work_order_costing",
@@ -89,6 +96,7 @@ doc_events = {
             "c4factory.api.work_order_mold.sync_mold_material_balances",
             "c4factory.api.work_order_flow.on_stock_entry_submit",
             "c4factory.c4factory.doctype.sub_pick_list.sub_pick_list.update_from_stock_entry",
+            "c4factory.api.work_order_costing.on_stock_submit",
         ],
         "on_cancel": [
             "c4factory.c4_manufacturing.stock_entry_hooks.reverse_additional_material_from_work_order",
@@ -131,6 +139,9 @@ doc_events = {
     # Timesheet - carry the Work Order project and keep WO costing in sync
     "Timesheet": {
         "before_validate": "c4factory.c4_manufacturing.timesheet_hooks.set_work_order_project",
+        "validate": "c4factory.api.work_order_costing.validate_timesheet_change",
+        "before_cancel": "c4factory.api.work_order_costing.validate_timesheet_change",
+        "before_update_after_submit": "c4factory.api.work_order_costing.validate_timesheet_change",
         "on_submit": "c4factory.c4_manufacturing.timesheet_hooks.sync_work_order_costing",
         "on_cancel": "c4factory.c4_manufacturing.timesheet_hooks.sync_work_order_costing",
         "on_update_after_submit": "c4factory.c4_manufacturing.timesheet_hooks.sync_work_order_costing",
@@ -177,6 +188,8 @@ patches = [
     "c4factory.patches.v1_0.move_mold_cost_account_to_manufacturing_settings",
     "c4factory.patches.v1_0.setup_operation_cost_account",
     "c4factory.patches.v1_0.setup_timesheet_work_order",
+    "c4factory.patches.v1_0.setup_continuous_costing",
+    "c4factory.patches.v1_0.enable_continuous_costing_by_default",
     "c4factory.patches.v1_0.allow_submitted_work_order_edits",
     "c4factory.patches.v1_0.allow_submitted_work_order_item_amount_edit",
 ]
@@ -185,6 +198,10 @@ override_doctype_dashboards = {
     "Pick List": "c4factory.api.pick_list_dashboard.get_data",
     "Sub Pick List": "c4factory.api.sub_pick_list_dashboard.get_data",
     "Work Order": "c4factory.api.work_order_dashboard.get_data",
+}
+
+scheduler_events = {
+    "cron": {"* * * * *": ["c4factory.api.work_order_costing.sync_pending_settlements"]},
 }
 
 # ---------------------------------------------------------

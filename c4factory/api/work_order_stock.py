@@ -33,6 +33,15 @@ def make_stock_entry(work_order_id, purpose, qty=None):
 
     # Custom logic for Manufacture
     wo = frappe.get_doc("Work Order", work_order_id)
+    wo.check_permission("read")
+    from c4factory.api.work_order_costing import check_available, is_continuous, lock_order
+
+    lock_order(wo.name)
+    wo.reload()
+    if wo.docstatus != 1 or wo.status in {"Stopped", "Closed", "Completed", "Cancelled"}:
+        frappe.throw(_("This Work Order is not open for production."))
+    if is_continuous(wo):
+        check_available(wo)
 
     if not wo.wip_warehouse:
         frappe.throw(f"Work Order {wo.name} has no WIP Warehouse set.")
@@ -75,7 +84,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
     is_final_finish = abs(fg_qty - remaining_fg_qty) <= 0.000001
     transferred_items = _get_finish_material_allocations(wo, fg_qty, is_final_finish)
 
-    if not transferred_items:
+    if not transferred_items and not (is_continuous(wo) and flt(wo.produced_qty) > 0):
         frappe.throw(
             "No eligible submitted material-transfer balance was found "
             f"in WIP for Work Order {wo.name}. Draft Pick Lists and draft "
@@ -97,6 +106,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
     se.from_bom = 0  # do NOT pull from BOM
     se.use_multi_level_bom = wo.use_multi_level_bom
     se.custom_uses_finish_allocation = 1
+    se.custom_continuous_costing = 1 if is_continuous(wo) else 0
     se.custom_is_final_finish = 1 if is_final_finish else 0
 
     # v15: set all manufactured-qty style fields
@@ -169,6 +179,7 @@ def make_stock_entry(work_order_id, purpose, qty=None):
         "conversion_factor": 1,
         "is_finished_item": 1,
         "is_scrap_item": 0,
+        "allow_zero_valuation_rate": 1 if is_continuous(wo) else 0,
     })
     fg_row._c4_role = "fg"
     fg_row._c4_expected_qty = fg_qty
@@ -272,16 +283,23 @@ def get_finish_context(work_order: str) -> dict:
         "name",
     )
     sources = [] if draft_finish else _get_available_transfer_sources(wo)
+    from c4factory.api.work_order_costing import BUSY, is_continuous, timesheet_context
+
+    continuous = is_continuous(wo)
+    costing = timesheet_context(wo) if continuous else {}
     return {
         "eligible": bool(
             wo.docstatus == 1
             and wo.get("status") not in {"Stopped", "Closed", "Completed", "Cancelled"}
             and remaining_qty > 0
-            and sources
+            and (sources or (continuous and flt(wo.produced_qty) > 0))
+            and wo.get("custom_continuous_cost_status") not in BUSY | {"Failed"}
         ),
         "remaining_qty": remaining_qty,
         "available_material_rows": len(sources),
         "draft_finish": draft_finish,
+        "continuous_costing": continuous,
+        **costing,
     }
 
 
@@ -292,6 +310,11 @@ def _get_finish_material_allocations(
     sources = _get_available_transfer_sources(wo, exclude_finish=exclude_finish)
     if not sources:
         return []
+
+    from c4factory.api.work_order_costing import is_continuous, normalized_allocations
+
+    if is_continuous(wo):
+        return normalized_allocations(sources)
 
     required_rows = {}
     required_item_by_code = {}
@@ -349,6 +372,10 @@ def _get_finish_material_allocations(
     result = []
     for source in sources:
         allocated_qty = flt(allocation_by_source.get(source.name))
+        # Stock quantities must use the same precision as ERPNext validation.
+        # This also fixes old Work Orders containing sub-precision residuals.
+        from c4factory.api.work_order_costing import transfer_precision
+        allocated_qty = flt(allocated_qty, transfer_precision())
         if allocated_qty <= 0:
             continue
         rate = source.total_amount / source.total_qty if source.total_qty > 0 else 0.0
@@ -489,6 +516,30 @@ def _get_available_transfer_sources(wo, exclude_finish: str | None = None):
         )
 
     _apply_legacy_finish_consumption(wo.name, sources, exclude_finish=exclude_finish)
+    if flt(wo.get("custom_continuous_costing")):
+        # Returns to stores reduce this order's available sources. Their cost is
+        # also deducted from the pool using actual WIP stock-ledger values.
+        returned = frappe.db.sql(
+            """
+            SELECT sed.item_code, SUM(ABS(COALESCE(NULLIF(sed.transfer_qty, 0), sed.qty))) AS qty
+            FROM `tabStock Entry Detail` sed
+            INNER JOIN `tabStock Entry` se ON se.name=sed.parent
+            WHERE se.work_order=%s AND se.docstatus=1
+              AND se.stock_entry_type='Material Transfer for Manufacture'
+              AND sed.s_warehouse=%s AND COALESCE(sed.t_warehouse, '') != %s
+            GROUP BY sed.item_code
+            """, (wo.name, wo.wip_warehouse, wo.wip_warehouse), as_dict=True,
+        )
+        for row in returned:
+            balance = flt(row.qty)
+            for source in sources:
+                if source.item_code != row.item_code:
+                    continue
+                deducted = min(source.remaining_qty, balance)
+                source.remaining_qty -= deducted
+                balance -= deducted
+                if balance <= 0:
+                    break
     return [source for source in sources if source.remaining_qty > 0]
 
 

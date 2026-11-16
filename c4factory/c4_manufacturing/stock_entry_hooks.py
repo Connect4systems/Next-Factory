@@ -182,6 +182,20 @@ def validate_finish_material_allocation(doc, method: str | None = None) -> None:
         frappe.throw(_("Allocated Finish Stock Entry requires a Work Order."))
 
     wo = frappe.get_doc("Work Order", doc.work_order)
+    if bool(flt(doc.get("custom_continuous_costing"))) != bool(flt(wo.get("custom_continuous_costing"))):
+        frappe.throw(_("Finish costing mode must match its Work Order."))
+    if flt(doc.get("custom_continuous_costing")):
+        from c4factory.api.work_order_costing import check_available, lock_order
+
+        lock_order(wo.name)
+        wo.reload()
+        check_available(wo)
+        other_draft = frappe.db.get_value("Stock Entry", {
+            "work_order": wo.name, "docstatus": 0, "stock_entry_type": "Manufacture",
+            "name": ("!=", doc.name or ""),
+        }, "name")
+        if other_draft:
+            frappe.throw(_("Another draft Finish already reserves this Work Order's materials."))
     row_finished_qty = sum(
         abs(flt(row.get("transfer_qty")) or flt(row.get("qty")))
         for row in doc.get("items") or []
@@ -951,6 +965,13 @@ def _get_allocated_operation_cost(doc, wo_doc, finished_qty: float) -> float:
     wo_produced_before = max(flt(getattr(wo_doc, "produced_qty", 0)), 0.0)
     wo_produced_after = max(wo_produced_before + finished_qty, finished_qty)
 
+    if flt(wo_doc.get("custom_continuous_costing")):
+        from c4factory.c4_manufacturing.work_order_hooks import _get_work_order_timesheet_cost
+
+        # Provisional batch share. The audited settlement subsequently averages
+        # all submitted receipts, including those delivered before these hours.
+        return _get_work_order_timesheet_cost(wo_doc.name) * finished_qty / wo_produced_after
+
     from c4factory.c4_manufacturing.work_order_hooks import _get_work_order_operating_cost
 
     total_op_cost = _get_work_order_operating_cost(wo_doc.name)
@@ -1023,7 +1044,7 @@ def _set_manufacture_finished_item_valuation(doc, wo_doc) -> None:
     transferred_rate_map = None
     pick_lists = set()
 
-    for row in doc.items or []:
+    for row in doc.get("items") or []:
         is_finished = flt(row.get("is_finished_item")) == 1
         is_scrap = flt(row.get("is_scrap_item")) == 1
 
@@ -1456,6 +1477,8 @@ def on_submit_update_work_order_costing(doc, method: str | None = None) -> None:
 
 def verify_final_finish_cost_reconciliation(doc, method: str | None = None) -> None:
     """Ensure final finished-goods value equals the final Work Order cost."""
+    if flt(doc.get("custom_continuous_costing")):
+        return  # The audited asynchronous settlement verifies all receipts together.
     if not flt(doc.get("custom_uses_finish_allocation")) or not flt(
         doc.get("custom_is_final_finish")
     ):
@@ -1531,6 +1554,11 @@ def _recalculate_work_order_costs(work_order_name: str) -> None:
     - Total Cost = Raw + Operating - Scrap
     """
     wo = frappe.get_doc("Work Order", work_order_name)
+    if flt(wo.get("custom_continuous_costing")):
+        from c4factory.api.work_order_costing import refresh_cost_summary
+
+        refresh_cost_summary(wo)
+        return
 
     # Fetch all Stock Entry rows for this Work Order
     rows = frappe.db.sql(

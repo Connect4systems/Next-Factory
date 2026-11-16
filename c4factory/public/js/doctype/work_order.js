@@ -538,6 +538,7 @@ async function refresh_material_transfer_progress(frm) {
 }
 
 async function configure_finish_button(frm) {
+  clearTimeout(frm.__c4_cost_poll);
   if (frm.doc.docstatus !== 1) return;
 
   const requestId = `${frm.doc.name}:${Date.now()}`;
@@ -554,11 +555,77 @@ async function configure_finish_button(frm) {
     return;
   }
   if (frm.__c4_finish_request !== requestId) return;
+  if (context?.continuous_costing && ["Queued", "Reposting"].includes(context.cost_status)) {
+    const pollCostStatus = async () => {
+      if (cur_frm !== frm || frm.__c4_finish_request !== requestId) return;
+      try {
+        const current = await frappe.xcall("c4factory.api.work_order_stock.get_finish_context", {
+          work_order: frm.doc.name,
+        });
+        if (cur_frm !== frm || frm.__c4_finish_request !== requestId) return;
+        if (current.cost_status !== context.cost_status) {
+          await frm.reload_doc();
+          return;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+      frm.__c4_cost_poll = setTimeout(pollCostStatus, 5000);
+    };
+    frm.__c4_cost_poll = setTimeout(pollCostStatus, 5000);
+  }
+  if (context?.continuous_costing) {
+    const prefix = __("Production costing: {0}", [""]).trim();
+    frm.layout.message.children(".form-message").filter(function () {
+      return $(this).find("[data-c4-production-cost-status]").length
+        || $(this).text().trim().startsWith(prefix);
+    }).remove();
+    const statusText = __("Production costing: {0}", [context.cost_status]);
+    frm.set_intro(`<span data-c4-production-cost-status>${frappe.utils.escape_html(statusText)}</span>`, "blue");
+  }
 
   const applyButton = () => {
     if (frm.__c4_finish_request !== requestId) return;
     frm.remove_custom_button(__("Finish"));
     frm.remove_custom_button(__("Finish"), __("Create"));
+    frm.remove_custom_button(__("Finish Timesheet"));
+    frm.remove_custom_button(__("Retry Cost Settlement"));
+    frm.remove_custom_button(__("Reopen Timesheet Costing"));
+    if (context?.continuous_costing) {
+      if (context.finish_timesheet) {
+        frm.add_custom_button(__("Finish Timesheet"), () => {
+          frappe.confirm(
+            __("Finish recording workshop hours and redistribute actual costs across all production batches?"),
+            async () => {
+              await frappe.xcall("c4factory.api.work_order_costing.finish_timesheet", {
+                work_order: frm.doc.name,
+              });
+              await frm.reload_doc();
+            }
+          );
+        });
+      }
+      if (context.cost_status === "Failed") {
+        frm.add_custom_button(__("Retry Cost Settlement"), async () => {
+          await frappe.xcall("c4factory.api.work_order_costing.retry_settlement", {
+            work_order: frm.doc.name,
+          });
+          await frm.reload_doc();
+        });
+      }
+      if (context.cost_status === "Cost Closed"
+          && ["Manufacturing Manager", "Stock Manager", "System Manager"].some(
+            (role) => frappe.user.has_role(role))) {
+        frm.add_custom_button(__("Reopen Timesheet Costing"), () => {
+          frappe.confirm(__("Reopen workshop hours and require a new final cost settlement?"), async () => {
+            await frappe.xcall("c4factory.api.work_order_costing.reopen_costing", {
+              work_order: frm.doc.name,
+            });
+            await frm.reload_doc();
+          });
+        });
+      }
+    }
     if (!context?.eligible) return;
 
     frm.add_custom_button(__("Finish"), () => open_finish_dialog(frm, context));
@@ -577,7 +644,9 @@ function open_finish_dialog(frm, context) {
       fieldtype: "Float",
       label: __("Finished Quantity"),
       default: remainingQty,
-      description: __(
+      description: context.continuous_costing
+        ? __("Receive finished products using actual material transfers and provisional pooled costs. Costs are redistributed automatically across production batches.")
+        : __(
         "Consumes only submitted material currently available in WIP. Finishing the entire remaining quantity completes the Work Order and blocks later transfers."
       ),
       reqd: 1,
