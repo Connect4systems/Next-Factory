@@ -319,6 +319,8 @@ function configure_mold_bom_queries(frm) {
 
 async function set_default_scrap_warehouse(frm) {
   if (frm.doc.docstatus === 2 || frm.doc.scrap_warehouse) return;
+  const field = frm.fields_dict.scrap_warehouse;
+  if (field) field.df.allow_on_submit = 1;
   const warehouse = await frappe.db.get_single_value(
     "Manufacturing Settings", "default_scrap_warehouse"
   );

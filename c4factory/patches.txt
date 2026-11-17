@@ -31,3 +31,4 @@ c4factory.patches.v1_0.enable_continuous_costing_by_default
 c4factory.patches.v1_0.preserve_historical_costing_modes
 c4factory.patches.v1_0.enable_work_order_mold_material_edits
 c4factory.patches.v1_0.allow_work_order_spec_edits
+c4factory.patches.v1_0.allow_submitted_work_order_scrap_warehouse
