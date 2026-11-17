@@ -12,12 +12,16 @@ SALES_ORDER_ITEM_SPEC_FIELDS = (
 
 
 def copy_sales_order_item_specs(doc, method=None):
-    """Copy manufacturing specifications from the linked Sales Order Item."""
+    """Initialize specs from the exact sales row, preserving Work Order edits."""
     if doc.get("docstatus") != 0:
         return
 
     sales_order_item = doc.get("sales_order_item")
     if not sales_order_item:
+        return
+
+    previous = doc.get_doc_before_save()
+    if previous and previous.get("sales_order_item") == sales_order_item:
         return
 
     values = frappe.db.get_value(
@@ -30,7 +34,10 @@ def copy_sales_order_item_specs(doc, method=None):
         return
 
     for fieldname in SALES_ORDER_ITEM_SPEC_FIELDS:
-        doc.set(fieldname, values.get(fieldname))
+        # A mapped/new Work Order may already contain a user's own value.
+        # Changing the linked sales row deliberately reloads its specifications.
+        if previous or doc.get(fieldname) in (None, ""):
+            doc.set(fieldname, values.get(fieldname))
 
 
 def attach_public_bom_files(doc, method=None):

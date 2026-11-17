@@ -12,6 +12,7 @@ from c4factory.c4_manufacturing.work_order_hooks import (
 class TestWorkOrderSalesOrderItemSpecs(FrappeTestCase):
     def test_copies_specs_from_exact_sales_order_item(self):
         work_order = MagicMock()
+        work_order.get_doc_before_save.return_value = None
         work_order.get.side_effect = {
             "docstatus": 0,
             "sales_order_item": "SO-ITEM-0001",
@@ -40,8 +41,42 @@ class TestWorkOrderSalesOrderItemSpecs(FrappeTestCase):
         for fieldname in SALES_ORDER_ITEM_SPEC_FIELDS:
             work_order.set.assert_any_call(fieldname, values.get(fieldname))
 
+    def test_preserves_edits_on_later_draft_saves(self):
+        work_order = MagicMock()
+        values = {"docstatus": 0, "sales_order_item": "SO-ITEM-0001", "custom_color": "Red"}
+        work_order.get.side_effect = values.get
+        work_order.get_doc_before_save.return_value = frappe._dict(values)
+        with patch("c4factory.c4_manufacturing.work_order_hooks.frappe.db.get_value") as get_value:
+            copy_sales_order_item_specs(work_order)
+        get_value.assert_not_called()
+        work_order.set.assert_not_called()
+
+    def test_preserves_values_already_entered_on_new_order(self):
+        work_order = MagicMock()
+        work_order.get_doc_before_save.return_value = None
+        work_order.get.side_effect = {
+            "docstatus": 0, "sales_order_item": "SO-ITEM-0001", "custom_color": "Red",
+        }.get
+        with patch("c4factory.c4_manufacturing.work_order_hooks.frappe.db.get_value",
+                   return_value={"custom_color": "Blue", "custom_finish": "Matte"}):
+            copy_sales_order_item_specs(work_order)
+        self.assertNotIn(("custom_color", "Blue"), [call.args for call in work_order.set.call_args_list])
+        work_order.set.assert_any_call("custom_finish", "Matte")
+
+    def test_changing_sales_row_fetches_its_specs(self):
+        work_order = MagicMock()
+        work_order.get.side_effect = {
+            "docstatus": 0, "sales_order_item": "SO-ITEM-0002", "custom_color": "Red",
+        }.get
+        work_order.get_doc_before_save.return_value = frappe._dict({"sales_order_item": "SO-ITEM-0001"})
+        with patch("c4factory.c4_manufacturing.work_order_hooks.frappe.db.get_value",
+                   return_value={"custom_color": "Blue"}):
+            copy_sales_order_item_specs(work_order)
+        work_order.set.assert_any_call("custom_color", "Blue")
+
     def test_does_nothing_without_sales_order_item(self):
         work_order = MagicMock()
+        work_order.get_doc_before_save.return_value = None
         work_order.get.side_effect = {"docstatus": 0}.get
 
         with patch(
@@ -54,6 +89,7 @@ class TestWorkOrderSalesOrderItemSpecs(FrappeTestCase):
 
     def test_does_not_change_a_submitted_work_order(self):
         work_order = MagicMock()
+        work_order.get_doc_before_save.return_value = None
         work_order.get.side_effect = {
             "docstatus": 1,
             "sales_order_item": "SO-ITEM-0001",

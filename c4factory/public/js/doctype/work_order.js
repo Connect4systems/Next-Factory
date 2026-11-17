@@ -2,6 +2,7 @@
 
 frappe.ui.form.on("Work Order", {
   onload(frm) {
+    if (frm.is_new()) fetch_sales_order_item_specs(frm, false);
     capture_work_order_edit_baseline(frm);
     frm.__c4_mold_material_bom = frm.doc.custom_mold_bom_no;
   },
@@ -42,6 +43,9 @@ frappe.ui.form.on("Work Order", {
     configure_mold_bom_queries(frm);
     hide_material_consumption_button(frm);
   },
+  sales_order_item(frm) {
+    return fetch_sales_order_item_specs(frm);
+  },
   bom_no(frm) {
     setTimeout(() => set_source_warehouses(frm), 800);
   },
@@ -68,6 +72,20 @@ frappe.ui.form.on("Work Order", {
     hide_create_job_card_button(frm);
   }
 });
+
+async function fetch_sales_order_item_specs(frm, overwrite = true) {
+  if (frm.doc.docstatus !== 0 || !frm.doc.sales_order_item) return;
+  const sales_order_item = frm.doc.sales_order_item;
+  const fields = ["custom_priority_", "custom_color", "custom_dimitions", "custom_finish"];
+  const { message: values } = await frappe.db.get_value(
+    "Sales Order Item", sales_order_item, fields
+  );
+  if (frm.doc.sales_order_item !== sales_order_item || !values) return;
+  const updates = Object.fromEntries(fields
+    .filter(field => overwrite || frm.doc[field] == null || frm.doc[field] === "")
+    .map(field => [field, values[field]]));
+  await frm.set_value(updates);
+}
 
 function capture_work_order_edit_baseline(frm) {
   if (frm.is_new() || frm.doc.docstatus !== 1) return;
