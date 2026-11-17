@@ -58,7 +58,20 @@ class WorkOrder(ERPNextWorkOrder):
     finally:
       self.flags.pop("c4_recalculate_required_items", None)
 
+  def before_validate(self):
+    parent_handler = getattr(super(), "before_validate", None)
+    if callable(parent_handler):
+      parent_handler()
+    self._set_default_scrap_warehouse()
+
+  def _set_default_scrap_warehouse(self):
+    if not self.get("scrap_warehouse"):
+      self.scrap_warehouse = frappe.db.get_single_value(
+        "Manufacturing Settings", "default_scrap_warehouse"
+      )
+
   def validate(self):
+    self._set_default_scrap_warehouse()
     super().validate()
     from c4factory.api.work_order_mold import validate_and_set_mold_materials
 
@@ -154,6 +167,9 @@ class WorkOrder(ERPNextWorkOrder):
     if not self.get("required_items"):
       frappe.throw(_("At least one required material is needed for the Work Order."))
 
+    from c4factory.api.work_order_mold import validate_and_set_mold_materials
+
+    validate_and_set_mold_materials(self)
     self.validate_warehouse_belongs_to_company()
 
   def on_update_after_submit(self):

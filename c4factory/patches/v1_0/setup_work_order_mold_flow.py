@@ -37,7 +37,8 @@ def execute():
 					"fieldtype": "Table",
 					"options": "Mold Material",
 					"insert_after": "custom_mold_material_section",
-					"read_only": 1,
+					"read_only": 0,
+					"allow_on_submit": 1,
 				},
 				{
 					"fieldname": "custom_mold_issue_pending",

@@ -7,6 +7,23 @@ from c4factory.overrides.work_order import WorkOrder
 
 
 class TestWorkOrderRequiredQuantities(FrappeTestCase):
+  def test_missing_scrap_warehouse_uses_manufacturing_settings(self):
+    wo = frappe._dict({"scrap_warehouse": None})
+    with patch(
+      "c4factory.overrides.work_order.frappe.db.get_single_value",
+      return_value="Scrap - C4",
+    ) as get_default:
+      WorkOrder._set_default_scrap_warehouse(wo)
+    self.assertEqual(wo.scrap_warehouse, "Scrap - C4")
+    get_default.assert_called_once_with("Manufacturing Settings", "default_scrap_warehouse")
+
+  def test_explicit_scrap_warehouse_is_preserved(self):
+    wo = frappe._dict({"scrap_warehouse": "Custom Scrap - C4"})
+    with patch("c4factory.overrides.work_order.frappe.db.get_single_value") as get_default:
+      WorkOrder._set_default_scrap_warehouse(wo)
+    get_default.assert_not_called()
+    self.assertEqual(wo.scrap_warehouse, "Custom Scrap - C4")
+
   def test_submitted_partial_material_transfer_starts_work_order(self):
     work_order = frappe._dict(
       {

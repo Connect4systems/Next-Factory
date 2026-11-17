@@ -19,15 +19,17 @@
    "in_list_view": 1,
    "label": "Item Code",
    "options": "Item",
-   "read_only": 1,
-   "reqd": 1
+   "read_only": 0,
+   "reqd": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "item_name",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Item Name",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "item_group",
@@ -35,7 +37,8 @@
    "hidden": 1,
    "label": "Item Group",
    "options": "Item Group",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "source_warehouse",
@@ -43,8 +46,9 @@
    "in_list_view": 1,
    "label": "Source Warehouse",
    "options": "Warehouse",
-   "read_only": 1,
-   "reqd": 1
+   "read_only": 0,
+   "reqd": 1,
+   "allow_on_submit": 1
   },
   {
    "bold": 1,
@@ -53,8 +57,9 @@
    "in_list_view": 1,
    "label": "Required Qty",
    "non_negative": 1,
-   "read_only": 1,
-   "reqd": 1
+   "read_only": 0,
+   "reqd": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "stock_uom",
@@ -62,7 +67,8 @@
    "in_list_view": 1,
    "label": "Stock UOM",
    "options": "UOM",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "issued_qty",
@@ -76,7 +82,8 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Balance Qty",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   }
  ],
  "istable": 1,

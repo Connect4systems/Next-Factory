@@ -3,9 +3,11 @@
 frappe.ui.form.on("Work Order", {
   onload(frm) {
     capture_work_order_edit_baseline(frm);
+    frm.__c4_mold_material_bom = frm.doc.custom_mold_bom_no;
   },
   refresh(frm) {
     configure_required_items_grid(frm);
+    configure_mold_materials_grid(frm);
     set_source_warehouses(frm);
     configure_continuous_start_button(frm);
     register_continuous_start_listener();
@@ -14,12 +16,14 @@ frappe.ui.form.on("Work Order", {
     configure_mold_bom_queries(frm);
     configure_create_mold_button(frm);
     register_mold_issue_listener();
+    set_default_scrap_warehouse(frm);
     configure_timesheet_button(frm);
     hide_material_consumption_button(frm);
     configure_finish_button(frm);
     refresh_material_transfer_progress(frm);
   },
   async before_save(frm) {
+    await set_default_scrap_warehouse(frm);
     if (!work_order_quantity_or_materials_changed(frm)) return;
 
     const confirmed = await confirm_work_order_edit(frm);
@@ -33,6 +37,7 @@ frappe.ui.form.on("Work Order", {
   },
   onload_post_render(frm) {
     configure_required_items_grid(frm);
+    configure_mold_materials_grid(frm);
     hide_create_job_card_button(frm);
     configure_mold_bom_queries(frm);
     hide_material_consumption_button(frm);
@@ -93,7 +98,10 @@ async function add_work_order_edit_reason(frm) {
 
 function get_work_order_edit_snapshot(doc) {
   return {
-    materials: get_work_order_material_rows(doc.required_items),
+    materials: [
+      ...get_work_order_material_rows(doc.required_items),
+      ...get_work_order_material_rows(doc.custom_mold_materials),
+    ],
   };
 }
 
@@ -291,6 +299,50 @@ function configure_mold_bom_queries(frm) {
   setTimeout(apply_queries, 0);
 }
 
+async function set_default_scrap_warehouse(frm) {
+  if (frm.doc.docstatus === 2 || frm.doc.scrap_warehouse) return;
+  const warehouse = await frappe.db.get_single_value(
+    "Manufacturing Settings", "default_scrap_warehouse"
+  );
+  if (warehouse && !frm.doc.scrap_warehouse) {
+    await frm.set_value("scrap_warehouse", warehouse);
+  }
+}
+
+function configure_mold_materials_grid(frm) {
+  if (frm.doc.docstatus === 2) return;
+  const table = frm.fields_dict.custom_mold_materials;
+  if (!table) return;
+  table.df.allow_on_submit = 1;
+  for (const fieldname of ["item_code", "required_qty", "source_warehouse"]) {
+    const df = frappe.meta.get_docfield("Mold Material", fieldname, frm.doc.name);
+    if (df) {
+      df.read_only = 0;
+      df.allow_on_submit = 1;
+    }
+  }
+  apply_required_items_grid_permissions(table);
+}
+
+frappe.ui.form.on("Mold Material", {
+  async item_code(frm, cdt, cdn) {
+    const row = locals[cdt][cdn];
+    if (!row.item_code) return;
+    const item_code = row.item_code;
+    const { message: item } = await frappe.db.get_value(
+      "Item", item_code, ["item_name", "item_group", "stock_uom"]
+    );
+    if (locals[cdt]?.[cdn]?.item_code !== item_code) return;
+    await frappe.model.set_value(cdt, cdn, item || {});
+    await set_source_warehouse_from_item_group(frm, cdt, cdn);
+  },
+  required_qty(frm, cdt, cdn) {
+    const row = locals[cdt][cdn];
+    frappe.model.set_value(cdt, cdn, "balance_qty",
+      Math.max(flt(row.required_qty) - flt(row.issued_qty), 0));
+  },
+});
+
 function refresh_mold_materials(frm) {
   if (frm.doc.docstatus !== 0) return;
   clearTimeout(frm.__c4_mold_material_timer);
@@ -323,11 +375,24 @@ function refresh_mold_materials(frm) {
     ) {
       return;
     }
-    frm.clear_table("custom_mold_materials");
-    (materials || []).forEach((values) => {
-      const row = frm.add_child("custom_mold_materials");
-      Object.assign(row, values);
-    });
+    const rows = frm.doc.custom_mold_materials || [];
+    if (rows.length && frm.__c4_mold_material_bom === requested_bom) {
+      const by_item = new Map((materials || []).map(row => [row.item_code, row]));
+      for (const row of rows) {
+        const values = by_item.get(row.item_code);
+        if (!values) continue;
+        row.required_qty = values.required_qty;
+        row.balance_qty = Math.max(flt(row.required_qty) - flt(row.issued_qty), 0);
+      }
+    } else {
+      frm.clear_table("custom_mold_materials");
+      (materials || []).forEach((values) => {
+        const row = frm.add_child("custom_mold_materials");
+        Object.assign(row, values);
+      });
+    }
+    frm.__c4_mold_material_bom = requested_bom;
+    frm.dirty();
     frm.refresh_field("custom_mold_materials");
   }, 250);
 }
@@ -428,6 +493,7 @@ function register_mold_issue_listener() {
 frappe.ui.form.on("Work Order Item", {
   form_render(frm) {
     configure_required_items_grid(frm);
+    configure_mold_materials_grid(frm);
   },
   item_code(frm, cdt, cdn) {
     set_source_warehouse_from_item_group(frm, cdt, cdn);

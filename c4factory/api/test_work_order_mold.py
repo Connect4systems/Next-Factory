@@ -34,6 +34,34 @@ class TestWorkOrderMold(FrappeTestCase):
 		validate_bom.assert_called_once_with("BOM-FG-001-001", "FG-001", "Product")
 		work_order.set.assert_called_once_with("custom_mold_materials", [])
 
+	def test_manual_mold_material_edits_survive_draft_save(self):
+		row = frappe._dict({
+			"item_code": "RM-MANUAL", "source_warehouse": "Stores - C4",
+			"required_qty": 7, "issued_qty": 2,
+		})
+		values = {
+			"custom_mold_bom_no": "BOM-MOLD", "custom_mold_qty": 3,
+			"custom_mold_materials": [row], "bom_no": None,
+		}
+		wo = Mock()
+		wo.meta.has_field.return_value = True
+		wo.get.side_effect = values.get
+		wo.production_item = "FG-001"
+		wo.docstatus = 0
+		with (
+			patch("c4factory.api.work_order_mold._validate_bom"),
+			patch("c4factory.api.work_order_mold._get_mold_material_values") as rebuild,
+			patch("c4factory.api.work_order_mold.frappe.get_cached_value", return_value=frappe._dict({
+				"item_name": "Manual", "item_group": "Raw", "stock_uom": "Kg",
+			})),
+		):
+			validate_and_set_mold_materials(wo)
+		rebuild.assert_not_called()
+		wo.set.assert_not_called()
+		self.assertEqual(row.required_qty, 7)
+		self.assertEqual(row.balance_qty, 5)
+		self.assertEqual(row.stock_uom, "Kg")
+
 	def test_scales_and_groups_mold_bom_materials(self):
 		bom = frappe._dict({"quantity": 2})
 		bom_rows = [

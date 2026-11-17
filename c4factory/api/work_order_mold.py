@@ -178,21 +178,29 @@ def validate_and_set_mold_materials(wo) -> None:
 	if wo.get("bom_no"):
 		_validate_bom(wo.bom_no, wo.production_item, "Product")
 	_validate_bom(mold_bom_no, wo.production_item, "Mold")
-	should_rebuild = wo.docstatus == 0 or (
-		getattr(wo, "_action", None) == "submit" and not wo.get("custom_mold_materials")
-	)
-	if should_rebuild:
+	# Populate once; normal saves must preserve manual row and quantity edits.
+	if not wo.get("custom_mold_materials"):
 		materials = _get_mold_material_values(
-			mold_bom_no,
-			mold_qty,
-			wo.get("company"),
+			mold_bom_no, mold_qty, wo.get("company"),
 			bool(cint(wo.get("use_multi_level_bom"))),
 		)
 		if not materials:
 			frappe.throw(_("Mold BOM {0} has no material rows.").format(frappe.bold(mold_bom_no)))
-		wo.set("custom_mold_materials", [])
 		for values in materials:
 			wo.append("custom_mold_materials", values)
+
+	for row in wo.get("custom_mold_materials") or []:
+		if not row.item_code or not row.source_warehouse or flt(row.required_qty) <= 0:
+			frappe.throw(_("Each mold material requires an item, source warehouse and positive quantity."))
+		item = frappe.get_cached_value(
+			"Item", row.item_code, ["item_name", "item_group", "stock_uom"], as_dict=True
+		)
+		row.item_name = item.item_name
+		row.item_group = item.item_group
+		row.stock_uom = item.stock_uom
+		if flt(row.required_qty) < flt(row.get("issued_qty")):
+			frappe.throw(_("Mold material quantity cannot be less than its issued quantity."))
+		row.balance_qty = max(flt(row.required_qty) - flt(row.get("issued_qty")), 0)
 
 
 def _get_mold_channels(wo) -> tuple[list, list]:

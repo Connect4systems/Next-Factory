@@ -29,3 +29,4 @@ c4factory.patches.v1_0.backfill_work_order_bom_attachments
 c4factory.patches.v1_0.setup_continuous_costing
 c4factory.patches.v1_0.enable_continuous_costing_by_default
 c4factory.patches.v1_0.preserve_historical_costing_modes
+c4factory.patches.v1_0.enable_work_order_mold_material_edits
